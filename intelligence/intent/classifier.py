@@ -1,10 +1,11 @@
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional
 
 from intelligence.intent.model import IntentResult
+from intelligence.session.model import ReconstructedSession
 
 
 class IntentClassifier:
-    """Infer attacker intent from observed commands."""
+    """Infer attacker intent from observed commands and session behavior."""
 
     COMMAND_RULES: Dict[str, List[str]] = {
         "discovery": [
@@ -53,8 +54,27 @@ class IntentClassifier:
         ],
     }
 
-    def classify(self, commands: List[str]) -> List[IntentResult]:
-        """Classify attacker intent from a list of commands."""
+    INTENT_PHASES: Dict[str, str] = {
+        "discovery": "reconnaissance",
+        "file_discovery": "reconnaissance",
+        "payload_retrieval": "delivery",
+        "execution": "execution",
+        "credential_access": "credential_access",
+        "defense_evasion": "defense_evasion",
+    }
+
+    def classify(
+        self,
+        commands: Optional[List[str]] = None,
+        session: Optional[ReconstructedSession] = None,
+    ) -> List[IntentResult]:
+        """Classify attacker intent from commands and optional session data."""
+
+        if session is not None:
+            commands = session.commands
+
+        if not commands:
+            return []
 
         scores: Dict[str, int] = {}
         evidence: Dict[str, List[str]] = {}
@@ -87,6 +107,7 @@ class IntentClassifier:
                     intent=intent,
                     confidence=round(confidence, 3),
                     evidence=evidence[intent],
+                    phase=self.INTENT_PHASES.get(intent),
                 )
             )
 
