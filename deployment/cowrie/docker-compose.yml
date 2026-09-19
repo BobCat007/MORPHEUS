@@ -1,0 +1,12 @@
+services:
+  cowrie:
+    image: cowrie/cowrie:latest
+    container_name: morpheus-cowrie
+    restart: unless-stopped
+
+    ports:
+      - "2222:2222"
+
+    volumes:
+      - ./etc:/cowrie/cowrie-git/etc
+      - ./var:/cowrie/cowrie-git/var

@@ -51,3 +51,14 @@ malware/
 *.dll
 *.bin
 *.elf
+
+# Cowrie runtime data
+deployment/cowrie/var/
+
+# Cowrie generated secrets and session artifacts
+deployment/cowrie/var/lib/cowrie/
+deployment/cowrie/var/log/cowrie/
+
+# Python cache
+__pycache__/
+*.py[cod]
