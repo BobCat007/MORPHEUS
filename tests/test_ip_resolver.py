@@ -1,4 +1,29 @@
+from typing import Optional
+
+from threat_intel.ip.model import IPIntelligence
+from threat_intel.ip.provider import IPIntelligenceProvider
 from threat_intel.ip.resolver import IPIntelligenceResolver
+
+
+class MockIPProvider(IPIntelligenceProvider):
+    """Test provider used to verify provider integration."""
+
+    def lookup(
+        self,
+        ip: str,
+    ) -> Optional[IPIntelligence]:
+        if ip != "8.8.8.8":
+            return None
+
+        return IPIntelligence(
+            ip_address=ip,
+            country="United States",
+            country_code="US",
+            city="Mountain View",
+            asn="AS15169",
+            organization="Google LLC",
+            sources=["mock-provider"],
+        )
 
 
 def test_resolve_valid_ipv4():
@@ -67,3 +92,49 @@ def test_duplicate_sources_are_not_added():
         "local",
         "maxmind",
     ]
+
+
+def test_provider_can_supply_ip_intelligence():
+    provider = MockIPProvider()
+
+    resolver = IPIntelligenceResolver(
+        providers=[provider]
+    )
+
+    intelligence = resolver.resolve("8.8.8.8")
+
+    assert intelligence.ip_address == "8.8.8.8"
+    assert intelligence.country == "United States"
+    assert intelligence.country_code == "US"
+    assert intelligence.city == "Mountain View"
+    assert intelligence.asn == "AS15169"
+    assert intelligence.organization == "Google LLC"
+    assert intelligence.sources == ["mock-provider"]
+
+
+def test_provider_fallback_when_provider_has_no_data():
+    provider = MockIPProvider()
+
+    resolver = IPIntelligenceResolver(
+        providers=[provider]
+    )
+
+    intelligence = resolver.resolve("1.1.1.1")
+
+    assert intelligence.ip_address == "1.1.1.1"
+    assert intelligence.sources == ["local"]
+    assert intelligence.country is None
+
+
+def test_provider_is_not_called_for_invalid_ip():
+    provider = MockIPProvider()
+
+    resolver = IPIntelligenceResolver(
+        providers=[provider]
+    )
+
+    try:
+        resolver.resolve("not-an-ip")
+        assert False
+    except ValueError as exc:
+        assert "Invalid IP address" in str(exc)

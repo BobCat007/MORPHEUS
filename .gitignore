@@ -65,3 +65,6 @@ __pycache__/
 
 # MORPHEUS runtime data
 data/
+
+# MaxMind GeoIP databases
+threat_intel/ip/data/
