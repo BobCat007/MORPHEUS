@@ -3,6 +3,14 @@ from typing import List, Optional
 
 
 @dataclass
+class SessionCommand:
+    """Represents a command executed during a session."""
+
+    command: str
+    timestamp: str
+
+
+@dataclass
 class ReconstructedSession:
     """Represents a reconstructed attacker session."""
 
@@ -18,15 +26,28 @@ class ReconstructedSession:
     authentication_success: bool = False
 
     commands: List[str] = field(default_factory=list)
+    command_events: List[SessionCommand] = field(default_factory=list)
 
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     duration_ms: Optional[int] = None
 
-    def add_command(self, command: str) -> None:
+    def add_command(
+        self,
+        command: str,
+        timestamp: Optional[str] = None,
+    ) -> None:
         """Add an attacker command to the session."""
 
         self.commands.append(command)
+
+        if timestamp:
+            self.command_events.append(
+                SessionCommand(
+                    command=command,
+                    timestamp=timestamp,
+                )
+            )
 
     def command_count(self) -> int:
         """Return the number of commands executed."""

@@ -48,18 +48,26 @@ class SessionReconstructor:
             command = event.data.get("input")
 
             if command:
-                session.add_command(command)
+                session.add_command(
+                    command=command,
+                    timestamp=event.timestamp,
+                )
 
         elif event.event_type == "cowrie.session.closed":
             session.end_time = event.timestamp
             session.duration_ms = event.data.get("duration_ms")
 
-    def get_session(self, session_id: str):
+    def get_session(
+        self,
+        session_id: str,
+    ) -> ReconstructedSession:
         """Return a reconstructed session by ID."""
 
         return self.sessions.get(session_id)
 
-    def get_all_sessions(self) -> Dict[str, ReconstructedSession]:
+    def get_all_sessions(
+        self,
+    ) -> Dict[str, ReconstructedSession]:
         """Return all reconstructed sessions."""
 
         return self.sessions
