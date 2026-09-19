@@ -7,8 +7,13 @@ class ReconstructedSession:
     """Represents a reconstructed attacker session."""
 
     session_id: str
+
     source_ip: Optional[str] = None
     protocol: Optional[str] = None
+
+    client_version: Optional[str] = None
+    hassh: Optional[str] = None
+
     username: Optional[str] = None
     authentication_success: bool = False
 

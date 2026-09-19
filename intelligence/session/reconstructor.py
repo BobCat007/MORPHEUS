@@ -30,9 +30,19 @@ class SessionReconstructor:
             session.protocol = event.data.get("protocol")
             session.start_time = event.timestamp
 
+        elif event.event_type == "cowrie.client.version":
+            session.client_version = event.data.get("version")
+
+        elif event.event_type == "cowrie.client.kex":
+            session.hassh = event.data.get("hassh")
+
         elif event.event_type == "cowrie.login.success":
             session.username = event.data.get("username")
             session.authentication_success = True
+
+        elif event.event_type == "cowrie.login.failed":
+            session.username = event.data.get("username")
+            session.authentication_success = False
 
         elif event.event_type == "cowrie.command.input":
             command = event.data.get("input")
