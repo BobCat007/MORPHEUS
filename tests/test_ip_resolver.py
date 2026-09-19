@@ -1,5 +1,7 @@
+from pathlib import Path
 from typing import Optional
 
+from threat_intel.ip.dbip_provider import DBIPProvider
 from threat_intel.ip.model import IPIntelligence
 from threat_intel.ip.provider import IPIntelligenceProvider
 from threat_intel.ip.resolver import IPIntelligenceResolver
@@ -138,3 +140,38 @@ def test_provider_is_not_called_for_invalid_ip():
         assert False
     except ValueError as exc:
         assert "Invalid IP address" in str(exc)
+
+
+def test_real_dbip_provider_works_through_resolver():
+    database_path = (
+        Path(__file__).resolve().parents[1]
+        / "threat_intel"
+        / "ip"
+        / "data"
+        / "dbip-city-lite-2026-09.mmdb"
+    )
+
+    if not database_path.exists():
+        return
+
+    provider = DBIPProvider(
+        str(database_path)
+    )
+
+    resolver = IPIntelligenceResolver(
+        providers=[provider]
+    )
+
+    intelligence = resolver.resolve(
+        "8.8.8.8"
+    )
+
+    assert intelligence.ip_address == "8.8.8.8"
+    assert intelligence.country == "United States"
+    assert intelligence.country_code == "US"
+    assert intelligence.city == "Mountain View"
+    assert intelligence.latitude == 37.422
+    assert intelligence.longitude == -122.085
+    assert intelligence.sources == ["db-ip"]
+
+    provider.close()
