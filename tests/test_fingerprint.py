@@ -90,3 +90,71 @@ def test_average_session_duration():
 
     assert fingerprint.session_count == 2
     assert fingerprint.average_session_duration() == 20000.0
+
+
+def test_command_intervals_are_recorded():
+    engine = FingerprintEngine()
+
+    session = ReconstructedSession(
+        session_id="session-1",
+        protocol="ssh",
+        commands=["ls", "whoami", "pwd"],
+    )
+
+    session.add_command(
+        command="ls",
+        timestamp="2026-09-18T18:43:34.000000Z",
+    )
+
+    session.add_command(
+        command="whoami",
+        timestamp="2026-09-18T18:43:39.000000Z",
+    )
+
+    session.add_command(
+        command="pwd",
+        timestamp="2026-09-18T18:43:47.000000Z",
+    )
+
+    fingerprint = engine.process(session)
+
+    assert fingerprint.command_intervals_ms == [
+        5000,
+        8000,
+    ]
+
+    assert fingerprint.average_command_interval() == 6500.0
+
+
+def test_unique_commands():
+    engine = FingerprintEngine()
+
+    session = ReconstructedSession(
+        session_id="session-1",
+        protocol="ssh",
+        commands=["ls", "whoami", "ls", "pwd", "whoami"],
+    )
+
+    fingerprint = engine.process(session)
+
+    assert fingerprint.unique_commands() == [
+        "ls",
+        "whoami",
+        "pwd",
+    ]
+
+
+def test_commands_per_minute():
+    engine = FingerprintEngine()
+
+    session = ReconstructedSession(
+        session_id="session-1",
+        protocol="ssh",
+        commands=["ls", "whoami", "pwd", "hostname"],
+        duration_ms=60000,
+    )
+
+    fingerprint = engine.process(session)
+
+    assert fingerprint.commands_per_minute() == 4.0
+

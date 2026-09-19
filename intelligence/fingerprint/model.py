@@ -24,6 +24,8 @@ class AttackerFingerprint:
     failed_login_count: int = 0
     successful_login_count: int = 0
 
+    command_intervals_ms: List[int] = field(default_factory=list)
+
     def add_source_ip(self, source_ip: str) -> None:
         """Record an observed source IP."""
 
@@ -42,6 +44,14 @@ class AttackerFingerprint:
         self.commands.append(command)
         self.command_count += 1
 
+    def add_command_interval(self, interval_ms: int) -> None:
+        """Record the time between two consecutive commands."""
+
+        if interval_ms < 0:
+            return
+
+        self.command_intervals_ms.append(interval_ms)
+
     def add_session(self, duration_ms: int = 0) -> None:
         """Record a new session."""
 
@@ -55,3 +65,28 @@ class AttackerFingerprint:
             return 0.0
 
         return self.total_duration_ms / self.session_count
+
+    def unique_commands(self) -> List[str]:
+        """Return commands observed without duplicates."""
+
+        return list(dict.fromkeys(self.commands))
+
+    def average_command_interval(self) -> float:
+        """Return average time between consecutive commands."""
+
+        if not self.command_intervals_ms:
+            return 0.0
+
+        return sum(self.command_intervals_ms) / len(
+            self.command_intervals_ms
+        )
+
+    def commands_per_minute(self) -> float:
+        """Return average command rate across recorded sessions."""
+
+        duration_ms = self.total_duration_ms
+
+        if duration_ms <= 0:
+            return 0.0
+
+        return self.command_count / (duration_ms / 60000)
