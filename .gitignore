@@ -62,3 +62,6 @@ deployment/cowrie/var/log/cowrie/
 # Python cache
 __pycache__/
 *.py[cod]
+
+# MORPHEUS runtime data
+data/
