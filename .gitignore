@@ -68,3 +68,9 @@ data/
 
 # MaxMind GeoIP databases
 threat_intel/ip/data/
+
+# Local GeoIP databases
+threat_intel/ip/data/
+
+# Local network intelligence databases
+threat_intel/network/data/
