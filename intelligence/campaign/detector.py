@@ -42,19 +42,28 @@ class CampaignDetector:
         if not reasons:
             return None
 
-        campaign = self._find_existing_campaign(
+        campaigns = self._find_matching_campaigns(
             session_one,
             session_two,
         )
 
-        if campaign is None:
+        if not campaigns:
             campaign = AttackCampaign(
                 campaign_id=self._generate_campaign_id(
                     session_one,
                     session_two,
                 )
             )
+
             self.campaigns[campaign.campaign_id] = campaign
+
+        elif len(campaigns) == 1:
+            campaign = campaigns[0]
+
+        else:
+            campaign = self._merge_campaigns(
+                campaigns
+            )
 
         self._populate_campaign(
             campaign,
@@ -101,6 +110,7 @@ class CampaignDetector:
             previous_fingerprint = self.fingerprints.get(
                 previous_session.session_id
             )
+
             previous_intents = self.intents.get(
                 previous_session.session_id
             )
@@ -119,19 +129,62 @@ class CampaignDetector:
 
         return matched_campaign
 
-    def _find_existing_campaign(
+    def _find_matching_campaigns(
         self,
         session_one: ReconstructedSession,
         session_two: ReconstructedSession,
-    ) -> Optional[AttackCampaign]:
+    ) -> List[AttackCampaign]:
+        """Find every campaign containing either correlated session."""
+
+        matching_campaigns: List[AttackCampaign] = []
+
         for campaign in self.campaigns.values():
             if (
                 session_one.session_id in campaign.session_ids
                 or session_two.session_id in campaign.session_ids
             ):
-                return campaign
+                matching_campaigns.append(campaign)
 
-        return None
+        return matching_campaigns
+
+    def _merge_campaigns(
+        self,
+        campaigns: List[AttackCampaign],
+    ) -> AttackCampaign:
+        """Merge multiple campaigns connected by new correlation evidence."""
+
+        if not campaigns:
+            raise ValueError(
+                "At least one campaign is required for merging."
+            )
+
+        primary = campaigns[0]
+
+        for campaign in campaigns[1:]:
+            for session_id in campaign.session_ids:
+                primary.add_session(session_id)
+
+            for fingerprint_id in campaign.fingerprint_ids:
+                primary.add_fingerprint(fingerprint_id)
+
+            for source_ip in campaign.source_ips:
+                primary.add_source_ip(source_ip)
+
+            for hassh in campaign.hasshs:
+                primary.add_hassh(hassh)
+
+            for intent in campaign.intents:
+                primary.add_intent(intent)
+
+            for phase in campaign.phases:
+                primary.add_phase(phase)
+
+            for reason in campaign.correlation_reasons:
+                primary.add_correlation_reason(reason)
+
+            del self.campaigns[campaign.campaign_id]
+
+        return primary
 
     def _correlation_reasons(
         self,
@@ -162,7 +215,10 @@ class CampaignDetector:
         ):
             reasons.append("same_client_version")
 
-        if self._shared_commands(session_one, session_two):
+        if self._shared_commands(
+            session_one,
+            session_two,
+        ):
             reasons.append("shared_commands")
 
         if (
@@ -173,7 +229,10 @@ class CampaignDetector:
         ):
             reasons.append("same_fingerprint")
 
-        if self._shared_intents(intents_one, intents_two):
+        if self._shared_intents(
+            intents_one,
+            intents_two,
+        ):
             reasons.append("shared_intent")
 
         return reasons

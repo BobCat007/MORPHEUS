@@ -406,3 +406,62 @@ def test_observe_same_session_id_is_idempotent():
 
     assert len(detector.sessions) == 2
     assert len(detector.get_all()) == 1
+
+
+def test_related_campaigns_are_merged_when_new_evidence_connects_them():
+    detector = CampaignDetector()
+
+    session_one = build_session(
+        "session-1",
+        "10.0.0.1",
+        ["ls"],
+    )
+
+    session_two = build_session(
+        "session-2",
+        "10.0.0.1",
+        ["whoami"],
+    )
+
+    session_three = build_session(
+        "session-3",
+        "10.0.0.2",
+        ["pwd"],
+    )
+
+    session_four = build_session(
+        "session-4",
+        "10.0.0.2",
+        ["hostname"],
+    )
+
+    campaign_one = detector.correlate(
+        session_one,
+        session_two,
+    )
+
+    campaign_two = detector.correlate(
+        session_three,
+        session_four,
+    )
+
+    assert campaign_one is not None
+    assert campaign_two is not None
+
+    assert campaign_one.campaign_id != campaign_two.campaign_id
+    assert len(detector.get_all()) == 2
+
+    bridge_campaign = detector.correlate(
+        session_two,
+        session_three,
+    )
+
+    assert bridge_campaign is not None
+    assert len(detector.get_all()) == 1
+
+    assert bridge_campaign.session_ids == [
+        "session-1",
+        "session-2",
+        "session-3",
+        "session-4",
+    ]
