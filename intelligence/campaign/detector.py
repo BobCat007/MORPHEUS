@@ -12,6 +12,13 @@ class CampaignDetector:
     def __init__(self) -> None:
         self.campaigns: Dict[str, AttackCampaign] = {}
 
+        # Previously observed sessions used as correlation candidates.
+        self.sessions: Dict[str, ReconstructedSession] = {}
+
+        # Intelligence associated with each observed session.
+        self.fingerprints: Dict[str, AttackerFingerprint] = {}
+        self.intents: Dict[str, List[IntentResult]] = {}
+
     def correlate(
         self,
         session_one: ReconstructedSession,
@@ -47,7 +54,6 @@ class CampaignDetector:
                     session_two,
                 )
             )
-
             self.campaigns[campaign.campaign_id] = campaign
 
         self._populate_campaign(
@@ -63,13 +69,61 @@ class CampaignDetector:
 
         return campaign
 
+    def observe(
+        self,
+        session: ReconstructedSession,
+        fingerprint: Optional[AttackerFingerprint] = None,
+        intents: Optional[List[IntentResult]] = None,
+    ) -> Optional[AttackCampaign]:
+        """Observe a new session and automatically correlate it.
+
+        The session is compared against previously observed sessions.
+        If correlation evidence is found, the session is attached to
+        the corresponding campaign.
+
+        The first observed session is stored but cannot form a campaign
+        by itself, so ``None`` is returned.
+        """
+
+        previous_sessions = list(self.sessions.values())
+
+        self.sessions[session.session_id] = session
+
+        if fingerprint is not None:
+            self.fingerprints[session.session_id] = fingerprint
+
+        if intents is not None:
+            self.intents[session.session_id] = intents
+
+        matched_campaign: Optional[AttackCampaign] = None
+
+        for previous_session in previous_sessions:
+            previous_fingerprint = self.fingerprints.get(
+                previous_session.session_id
+            )
+            previous_intents = self.intents.get(
+                previous_session.session_id
+            )
+
+            campaign = self.correlate(
+                previous_session,
+                session,
+                previous_fingerprint,
+                fingerprint,
+                previous_intents,
+                intents,
+            )
+
+            if campaign is not None:
+                matched_campaign = campaign
+
+        return matched_campaign
+
     def _find_existing_campaign(
         self,
         session_one: ReconstructedSession,
         session_two: ReconstructedSession,
     ) -> Optional[AttackCampaign]:
-        """Find a campaign containing either correlated session."""
-
         for campaign in self.campaigns.values():
             if (
                 session_one.session_id in campaign.session_ids
@@ -88,8 +142,6 @@ class CampaignDetector:
         intents_one: Optional[List[IntentResult]],
         intents_two: Optional[List[IntentResult]],
     ) -> List[str]:
-        """Return explicit reasons why two sessions are related."""
-
         reasons: List[str] = []
 
         if (
@@ -110,10 +162,7 @@ class CampaignDetector:
         ):
             reasons.append("same_client_version")
 
-        if self._shared_commands(
-            session_one,
-            session_two,
-        ):
+        if self._shared_commands(session_one, session_two):
             reasons.append("shared_commands")
 
         if (
@@ -124,10 +173,7 @@ class CampaignDetector:
         ):
             reasons.append("same_fingerprint")
 
-        if self._shared_intents(
-            intents_one,
-            intents_two,
-        ):
+        if self._shared_intents(intents_one, intents_two):
             reasons.append("shared_intent")
 
         return reasons
@@ -137,8 +183,6 @@ class CampaignDetector:
         session_one: ReconstructedSession,
         session_two: ReconstructedSession,
     ) -> List[str]:
-        """Return commands observed in both sessions."""
-
         commands_one = set(session_one.commands)
         commands_two = set(session_two.commands)
 
@@ -151,8 +195,6 @@ class CampaignDetector:
         intents_one: Optional[List[IntentResult]],
         intents_two: Optional[List[IntentResult]],
     ) -> List[str]:
-        """Return intents observed in both sessions."""
-
         if not intents_one or not intents_two:
             return []
 
@@ -181,8 +223,6 @@ class CampaignDetector:
         intents_two: Optional[List[IntentResult]],
         reasons: List[str],
     ) -> None:
-        """Populate a campaign with correlated intelligence."""
-
         campaign.add_session(
             session_one.session_id
         )
@@ -241,8 +281,6 @@ class CampaignDetector:
         session_one: ReconstructedSession,
         session_two: ReconstructedSession,
     ) -> str:
-        """Generate a deterministic campaign ID."""
-
         session_ids = "|".join(
             sorted(
                 [
@@ -259,6 +297,6 @@ class CampaignDetector:
         ).hexdigest()[:16]
 
     def get_all(self) -> Dict[str, AttackCampaign]:
-        """Return all detected campaigns."""
+        """Return all observed campaigns."""
 
         return self.campaigns

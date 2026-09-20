@@ -247,3 +247,32 @@ def test_related_sessions_are_aggregated_into_one_campaign():
     ]
 
     assert len(detector.get_all()) == 1
+
+
+def test_observe_session_automatically_correlates_with_previous_session():
+    detector = CampaignDetector()
+
+    session_one = build_session(
+        "session-1",
+        "10.0.0.1",
+        ["ls", "whoami"],
+    )
+
+    session_two = build_session(
+        "session-2",
+        "10.0.0.1",
+        ["pwd", "hostname"],
+    )
+
+    first_result = detector.observe(session_one)
+    second_result = detector.observe(session_two)
+
+    assert first_result is None
+    assert second_result is not None
+
+    assert second_result.session_ids == [
+        "session-1",
+        "session-2",
+    ]
+
+    assert "same_source_ip" in second_result.correlation_reasons
