@@ -1,4 +1,5 @@
 from deception.control.adapter import DeceptionAdapter
+from deception.control.cowrie_lifecycle import CowrieLifecycle
 from deception.control.model import DeceptionPlan
 from deception.control.planner import DeceptionPlanner
 from deception.personality.engine import PersonalityEngine
@@ -13,16 +14,18 @@ class DeceptionController:
         personality_engine: PersonalityEngine,
         planner: DeceptionPlanner,
         adapter: DeceptionAdapter,
+        lifecycle: CowrieLifecycle,
     ) -> None:
         self.personality_engine = personality_engine
         self.planner = planner
         self.adapter = adapter
+        self.lifecycle = lifecycle
 
     def apply_for_risk(
         self,
         assessment: RiskAssessment,
     ) -> DeceptionPlan:
-        """Select and apply the appropriate deception personality."""
+        """Select, apply, and activate the appropriate deception personality."""
 
         personality = self.personality_engine.select(
             assessment
@@ -38,6 +41,13 @@ class DeceptionController:
         )
 
         self.adapter.apply(plan)
+
+        if not self.lifecycle.is_running():
+            raise RuntimeError(
+                "Deception service is not running."
+            )
+
+        self.lifecycle.restart()
 
         return plan
 
