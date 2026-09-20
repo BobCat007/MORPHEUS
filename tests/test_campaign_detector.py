@@ -542,3 +542,89 @@ def test_campaign_temporal_metadata_updates_when_campaign_grows():
     assert campaign is not None
     assert campaign.first_seen == "2026-09-20T09:00:00+00:00"
     assert campaign.last_seen == "2026-09-20T12:00:00+00:00"
+
+def test_campaign_confidence_score_reflects_correlation_evidence():
+    detector = CampaignDetector()
+
+    session_one = build_session(
+        "session-1",
+        "10.0.0.1",
+        ["ls", "whoami"],
+    )
+
+    session_two = build_session(
+        "session-2",
+        "10.0.0.1",
+        ["whoami", "pwd"],
+    )
+
+    campaign = detector.correlate(
+        session_one,
+        session_two,
+    )
+
+    assert campaign is not None
+
+    assert campaign.confidence_score == 70
+
+    assert campaign.confidence_factors == {
+        "same_source_ip": 30,
+        "same_hassh": 25,
+        "same_client_version": 5,
+        "shared_commands": 10,
+    }
+
+def test_campaign_confidence_score_combines_all_evidence_types():
+    detector = CampaignDetector()
+    fingerprint_engine = FingerprintEngine()
+    classifier = IntentClassifier()
+
+    session_one = build_session(
+        "session-1",
+        "10.0.0.1",
+        ["whoami", "hostname"],
+    )
+
+    session_two = build_session(
+        "session-2",
+        "10.0.0.1",
+        ["whoami", "hostname"],
+    )
+
+    fingerprint_one = fingerprint_engine.process(
+        session_one
+    )
+
+    fingerprint_two = fingerprint_engine.process(
+        session_two
+    )
+
+    intents_one = classifier.classify(
+        session=session_one
+    )
+
+    intents_two = classifier.classify(
+        session=session_two
+    )
+
+    campaign = detector.correlate(
+        session_one,
+        session_two,
+        fingerprint_one,
+        fingerprint_two,
+        intents_one,
+        intents_two,
+    )
+
+    assert campaign is not None
+
+    assert campaign.confidence_score == 100
+
+    assert campaign.confidence_factors == {
+        "same_source_ip": 30,
+        "same_hassh": 25,
+        "same_client_version": 5,
+        "shared_commands": 10,
+        "same_fingerprint": 20,
+        "shared_intent": 10,
+    }

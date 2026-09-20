@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -18,6 +18,11 @@ class AttackCampaign:
     phases: List[str] = field(default_factory=list)
 
     correlation_reasons: List[str] = field(default_factory=list)
+
+    confidence_score: int = 0
+    confidence_factors: Dict[str, int] = field(
+        default_factory=dict
+    )
 
     first_seen: Optional[str] = None
     last_seen: Optional[str] = None
@@ -63,6 +68,31 @@ class AttackCampaign:
 
         if reason and reason not in self.correlation_reasons:
             self.correlation_reasons.append(reason)
+
+    def add_confidence_factor(
+        self,
+        reason: str,
+        score: int,
+    ) -> None:
+        """Record the confidence contribution of one evidence type."""
+
+        if not reason:
+            return
+
+        if score < 0:
+            raise ValueError(
+                "Confidence factor score cannot be negative."
+            )
+
+        self.confidence_factors[reason] = score
+
+        self.confidence_score = min(
+            100,
+            max(
+                0,
+                sum(self.confidence_factors.values()),
+            ),
+        )
 
     def update_time_range(
         self,

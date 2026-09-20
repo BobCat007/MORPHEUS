@@ -9,6 +9,15 @@ from intelligence.session.model import ReconstructedSession
 class CampaignDetector:
     """Detect and aggregate relationships between attacker sessions."""
 
+    CONFIDENCE_SCORES = {
+        "same_source_ip": 30,
+        "same_hassh": 25,
+        "same_fingerprint": 20,
+        "shared_intent": 10,
+        "shared_commands": 10,
+        "same_client_version": 5,
+    }
+
     def __init__(self) -> None:
         self.campaigns: Dict[str, AttackCampaign] = {}
 
@@ -73,6 +82,11 @@ class CampaignDetector:
             fingerprint_two,
             intents_one,
             intents_two,
+            reasons,
+        )
+
+        self._score_campaign_evidence(
+            campaign,
             reasons,
         )
 
@@ -182,6 +196,12 @@ class CampaignDetector:
             for reason in campaign.correlation_reasons:
                 primary.add_correlation_reason(reason)
 
+            for reason, score in campaign.confidence_factors.items():
+                primary.add_confidence_factor(
+                    reason,
+                    score,
+                )
+
             primary.update_time_range(
                 campaign.first_seen,
                 campaign.last_seen,
@@ -241,6 +261,27 @@ class CampaignDetector:
             reasons.append("shared_intent")
 
         return reasons
+
+    def _score_campaign_evidence(
+        self,
+        campaign: AttackCampaign,
+        reasons: List[str],
+    ) -> None:
+        """Add transparent confidence contributions for observed evidence."""
+
+        for reason in reasons:
+            score = self.CONFIDENCE_SCORES.get(
+                reason,
+                0,
+            )
+
+            if score <= 0:
+                continue
+
+            campaign.add_confidence_factor(
+                reason,
+                score,
+            )
 
     def _shared_commands(
         self,
