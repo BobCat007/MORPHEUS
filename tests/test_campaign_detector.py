@@ -276,3 +276,133 @@ def test_observe_session_automatically_correlates_with_previous_session():
     ]
 
     assert "same_source_ip" in second_result.correlation_reasons
+
+
+def test_observe_preserves_fingerprint_intelligence():
+    detector = CampaignDetector()
+    fingerprint_engine = FingerprintEngine()
+
+    session_one = build_session(
+        "session-1",
+        "10.0.0.1",
+        ["ls", "whoami"],
+    )
+
+    session_two = build_session(
+        "session-2",
+        "10.0.0.2",
+        ["whoami", "ls"],
+    )
+
+    fingerprint_one = fingerprint_engine.process(
+        session_one
+    )
+
+    fingerprint_two = fingerprint_engine.process(
+        session_two
+    )
+
+    campaign = detector.observe(
+        session_one,
+        fingerprint=fingerprint_one,
+    )
+
+    assert campaign is None
+
+    campaign = detector.observe(
+        session_two,
+        fingerprint=fingerprint_two,
+    )
+
+    assert campaign is not None
+    assert "same_fingerprint" in campaign.correlation_reasons
+
+    assert fingerprint_one.fingerprint_id in (
+        campaign.fingerprint_ids
+    )
+
+    assert fingerprint_two.fingerprint_id in (
+        campaign.fingerprint_ids
+    )
+
+
+def test_observe_preserves_intent_intelligence():
+    detector = CampaignDetector()
+    classifier = IntentClassifier()
+
+    session_one = build_session(
+        "session-1",
+        "10.0.0.1",
+        ["whoami", "hostname"],
+    )
+
+    session_two = build_session(
+        "session-2",
+        "10.0.0.2",
+        ["id", "uname -a"],
+    )
+
+    intents_one = classifier.classify(
+        session=session_one
+    )
+
+    intents_two = classifier.classify(
+        session=session_two
+    )
+
+    campaign = detector.observe(
+        session_one,
+        intents=intents_one,
+    )
+
+    assert campaign is None
+
+    campaign = detector.observe(
+        session_two,
+        intents=intents_two,
+    )
+
+    assert campaign is not None
+    assert "shared_intent" in campaign.correlation_reasons
+
+    assert "discovery" in campaign.intents
+    assert "reconnaissance" in campaign.phases
+
+
+def test_observe_same_session_id_is_idempotent():
+    detector = CampaignDetector()
+
+    session_one = build_session(
+        "session-1",
+        "10.0.0.1",
+        ["ls", "whoami"],
+    )
+
+    session_two = build_session(
+        "session-2",
+        "10.0.0.1",
+        ["pwd"],
+    )
+
+    first_result = detector.observe(session_one)
+
+    assert first_result is None
+
+    second_result = detector.observe(session_two)
+
+    assert second_result is not None
+    assert second_result.session_ids == [
+        "session-1",
+        "session-2",
+    ]
+
+    repeated_result = detector.observe(session_two)
+
+    assert repeated_result is not None
+    assert repeated_result.session_ids == [
+        "session-1",
+        "session-2",
+    ]
+
+    assert len(detector.sessions) == 2
+    assert len(detector.get_all()) == 1
