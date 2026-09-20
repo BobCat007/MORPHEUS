@@ -1,5 +1,7 @@
 # MORPHEUS
 
+![MORPHEUS](assets/morpheus-banner.png)
+
 ### Adaptive Adversary Deception & Intelligence
 
 MORPHEUS is an adaptive cybersecurity deception platform designed to observe, understand, and respond to attacker behavior inside controlled honeypot environments.
