@@ -8,6 +8,8 @@ def build_session(
     session_id: str,
     source_ip: str,
     commands: list,
+    start_time: str = None,
+    end_time: str = None,
 ) -> ReconstructedSession:
     session = ReconstructedSession(
         session_id=session_id,
@@ -16,6 +18,8 @@ def build_session(
         client_version="SSH-2.0-OpenSSH_8.2p1",
         hassh="abc123",
         commands=commands,
+        start_time=start_time,
+        end_time=end_time,
         duration_ms=30000,
     )
 
@@ -465,3 +469,76 @@ def test_related_campaigns_are_merged_when_new_evidence_connects_them():
         "session-3",
         "session-4",
     ]
+
+
+def test_campaign_records_first_and_last_seen_times():
+    detector = CampaignDetector()
+
+    session_one = build_session(
+        "session-1",
+        "10.0.0.1",
+        ["ls"],
+        start_time="2026-09-20T10:00:00+00:00",
+        end_time="2026-09-20T10:05:00+00:00",
+    )
+
+    session_two = build_session(
+        "session-2",
+        "10.0.0.1",
+        ["whoami"],
+        start_time="2026-09-20T11:00:00+00:00",
+        end_time="2026-09-20T11:10:00+00:00",
+    )
+
+    campaign = detector.correlate(
+        session_one,
+        session_two,
+    )
+
+    assert campaign is not None
+    assert campaign.first_seen == "2026-09-20T10:00:00+00:00"
+    assert campaign.last_seen == "2026-09-20T11:10:00+00:00"
+
+
+def test_campaign_temporal_metadata_updates_when_campaign_grows():
+    detector = CampaignDetector()
+
+    session_one = build_session(
+        "session-1",
+        "10.0.0.1",
+        ["ls"],
+        start_time="2026-09-20T10:00:00+00:00",
+        end_time="2026-09-20T10:05:00+00:00",
+    )
+
+    session_two = build_session(
+        "session-2",
+        "10.0.0.1",
+        ["whoami"],
+        start_time="2026-09-20T11:00:00+00:00",
+        end_time="2026-09-20T11:10:00+00:00",
+    )
+
+    session_three = build_session(
+        "session-3",
+        "10.0.0.1",
+        ["pwd"],
+        start_time="2026-09-20T09:00:00+00:00",
+        end_time="2026-09-20T12:00:00+00:00",
+    )
+
+    campaign = detector.correlate(
+        session_one,
+        session_two,
+    )
+
+    assert campaign is not None
+
+    campaign = detector.correlate(
+        session_two,
+        session_three,
+    )
+
+    assert campaign is not None
+    assert campaign.first_seen == "2026-09-20T09:00:00+00:00"
+    assert campaign.last_seen == "2026-09-20T12:00:00+00:00"

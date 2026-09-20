@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -18,6 +18,9 @@ class AttackCampaign:
     phases: List[str] = field(default_factory=list)
 
     correlation_reasons: List[str] = field(default_factory=list)
+
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
 
     def add_session(self, session_id: str) -> None:
         """Add a session to the campaign."""
@@ -60,3 +63,24 @@ class AttackCampaign:
 
         if reason and reason not in self.correlation_reasons:
             self.correlation_reasons.append(reason)
+
+    def update_time_range(
+        self,
+        start_time: Optional[str],
+        end_time: Optional[str],
+    ) -> None:
+        """Update the temporal boundaries of the campaign."""
+
+        if start_time:
+            if (
+                self.first_seen is None
+                or start_time < self.first_seen
+            ):
+                self.first_seen = start_time
+
+        if end_time:
+            if (
+                self.last_seen is None
+                or end_time > self.last_seen
+            ):
+                self.last_seen = end_time

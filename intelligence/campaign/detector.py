@@ -182,6 +182,11 @@ class CampaignDetector:
             for reason in campaign.correlation_reasons:
                 primary.add_correlation_reason(reason)
 
+            primary.update_time_range(
+                campaign.first_seen,
+                campaign.last_seen,
+            )
+
             del self.campaigns[campaign.campaign_id]
 
         return primary
@@ -288,6 +293,16 @@ class CampaignDetector:
 
         campaign.add_session(
             session_two.session_id
+        )
+
+        campaign.update_time_range(
+            session_one.start_time,
+            session_one.end_time,
+        )
+
+        campaign.update_time_range(
+            session_two.start_time,
+            session_two.end_time,
         )
 
         for fingerprint in (
