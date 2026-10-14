@@ -372,6 +372,22 @@ def test_observe_preserves_intent_intelligence():
     assert "discovery" in campaign.intents
     assert "reconnaissance" in campaign.phases
 
+def test_observing_first_session_repeatedly_does_not_create_campaign():
+    detector = CampaignDetector()
+
+    session = build_session(
+        "session-1",
+        "10.0.0.1",
+        ["ls", "whoami"],
+    )
+
+    first_result = detector.observe(session)
+    repeated_result = detector.observe(session)
+
+    assert first_result is None
+    assert repeated_result is None
+    assert len(detector.sessions) == 1
+    assert detector.get_all() == {}
 
 def test_observe_same_session_id_is_idempotent():
     detector = CampaignDetector()

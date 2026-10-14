@@ -1,3 +1,4 @@
+
 from typing import Dict, List, Optional
 
 from intelligence.campaign.model import AttackCampaign
@@ -38,6 +39,10 @@ class CampaignDetector:
         intents_two: Optional[List[IntentResult]] = None,
     ) -> Optional[AttackCampaign]:
         """Correlate two sessions and add them to an existing campaign."""
+
+        # A session cannot provide correlation evidence against itself.
+        if session_one.session_id == session_two.session_id:
+            return None
 
         reasons = self._correlation_reasons(
             session_one,
@@ -108,7 +113,11 @@ class CampaignDetector:
         by itself, so ``None`` is returned.
         """
 
-        previous_sessions = list(self.sessions.values())
+        previous_sessions = [
+            previous_session
+            for previous_session in self.sessions.values()
+            if previous_session.session_id != session.session_id
+        ]
 
         self.sessions[session.session_id] = session
 
