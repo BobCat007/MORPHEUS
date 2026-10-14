@@ -94,4 +94,3 @@ def test_pipeline_persists_raw_events_and_intelligence_analysis(tmp_path):
     assert analysis["fingerprint"]["session_count"] == 1
     assert analysis["risk_assessment"]["score"] > 0
     assert analysis["recommended_actions"]
-'PY'
