@@ -25,33 +25,24 @@ class DeceptionController:
         self,
         assessment: RiskAssessment,
     ) -> DeceptionPlan:
-        """Select, apply, and activate the appropriate deception personality."""
-
-        personality = self.personality_engine.select(
-            assessment
-        )
+        """Select and apply a personality only when Cowrie is running."""
+        personality = self.personality_engine.select(assessment)
 
         if personality is None:
             raise ValueError(
                 "No enabled honeypot personality is available."
             )
 
-        plan = self.planner.build_plan(
-            personality
-        )
-
-        self.adapter.apply(plan)
-
+        # Check service state before touching its configuration.
         if not self.lifecycle.is_running():
-            raise RuntimeError(
-                "Deception service is not running."
-            )
+            raise RuntimeError("Deception service is not running.")
 
+        plan = self.planner.build_plan(personality)
+        self.adapter.apply(plan)
         self.lifecycle.restart()
 
         return plan
 
     def current_state(self) -> DeceptionPlan:
         """Return the currently applied deception state."""
-
         return self.adapter.current_state()
