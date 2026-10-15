@@ -1,8 +1,9 @@
 from dataclasses import asdict
-from typing import Set
+from typing import Optional, Set
 
 from core.events.bus import EventBus
 from core.events.model import MorpheusEvent
+from deception.control.controller import DeceptionController
 from intelligence.campaign.detector import CampaignDetector
 from intelligence.fingerprint.engine import FingerprintEngine
 from intelligence.intent.classifier import IntentClassifier
@@ -13,10 +14,23 @@ from intelligence.session.reconstructor import SessionReconstructor
 
 
 class IntelligenceHandler:
-    """Coordinate intelligence analysis for completed Cowrie sessions."""
+    """Coordinate intelligence analysis and optional adaptive deception."""
 
-    def __init__(self, event_bus: EventBus) -> None:
+    def __init__(
+        self,
+        event_bus: EventBus,
+        deception_controller: Optional[DeceptionController] = None,
+        adaptive_deception_enabled: bool = False,
+    ) -> None:
+        if adaptive_deception_enabled and deception_controller is None:
+            raise ValueError(
+                "Adaptive deception requires an explicit controller."
+            )
+
         self.event_bus = event_bus
+        self.deception_controller = deception_controller
+        self.adaptive_deception_enabled = adaptive_deception_enabled
+
         self.session_reconstructor = SessionReconstructor()
         self.fingerprint_engine = FingerprintEngine()
         self.intent_classifier = IntentClassifier()
@@ -25,13 +39,11 @@ class IntelligenceHandler:
         self.risk_engine = RiskScoringEngine()
         self.response_engine = AdaptiveResponseEngine()
 
-        # Prevent cumulative intelligence engines from processing the same
-        # completed session more than once during this handler's lifetime.
+        # Prevent duplicate close events from processing a session twice.
         self.processed_session_ids: Set[str] = set()
 
     def handle(self, event: MorpheusEvent) -> None:
         """Reconstruct sessions and analyze each session when it closes."""
-
         self.session_reconstructor.process(event)
 
         if event.event_type != "cowrie.session.closed":
@@ -45,8 +57,8 @@ class IntelligenceHandler:
         if session is None:
             return
 
-        # Mark before invoking cumulative engines to avoid double-counting
-        # if a duplicate close event arrives.
+        # Mark before processing so duplicate close events cannot cause
+        # repeated analysis or repeated deception actions.
         self.processed_session_ids.add(session_id)
 
         fingerprint = self.fingerprint_engine.process(session)
@@ -69,6 +81,25 @@ class IntelligenceHandler:
 
         actions = self.response_engine.evaluate(assessment)
 
+        deception_result = {
+            "enabled": self.adaptive_deception_enabled,
+            "applied": False,
+        }
+
+        if self.adaptive_deception_enabled:
+            try:
+                plan = self.deception_controller.apply_for_risk(assessment)
+                deception_result.update(
+                    {
+                        "applied": True,
+                        "plan": asdict(plan),
+                    }
+                )
+            except Exception as exc:
+                # Preserve the intelligence result even if the external
+                # deception service cannot be reconfigured.
+                deception_result["error"] = type(exc).__name__
+
         analysis = {
             "session": asdict(session),
             "fingerprint": asdict(fingerprint),
@@ -77,6 +108,7 @@ class IntelligenceHandler:
             "campaign": asdict(campaign) if campaign is not None else None,
             "risk_assessment": asdict(assessment),
             "recommended_actions": [asdict(action) for action in actions],
+            "deception": deception_result,
         }
 
         self.event_bus.publish(

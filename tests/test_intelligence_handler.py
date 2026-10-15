@@ -158,3 +158,117 @@ def test_duplicate_session_close_does_not_process_session_twice():
     )
     assert fingerprint.session_count == 1
     assert fingerprint.command_count == 2
+
+
+from deception.control.model import DeceptionPlan
+
+
+class FakeDeceptionController:
+    def __init__(self, should_fail=False):
+        self.calls = []
+        self.should_fail = should_fail
+
+    def apply_for_risk(self, assessment):
+        self.calls.append(assessment)
+
+        if self.should_fail:
+            raise RuntimeError("Simulated deception failure")
+
+        return DeceptionPlan(
+            personality_name="test_personality",
+            hostname="test-host",
+            operating_system="Ubuntu 22.04",
+            deception_level=2,
+        )
+
+
+def test_adaptive_deception_is_disabled_by_default():
+    event_bus = EventBus()
+    handler = IntelligenceHandler(event_bus)
+    published = []
+
+    event_bus.subscribe(
+        "morpheus.intelligence.analysis",
+        published.append,
+    )
+
+    for event in build_session_events():
+        handler.handle(event)
+
+    assert len(published) == 1
+    assert published[0].data["deception"] == {
+        "enabled": False,
+        "applied": False,
+    }
+
+
+def test_enabled_adaptive_deception_applies_once_per_session():
+    event_bus = EventBus()
+    controller = FakeDeceptionController()
+    handler = IntelligenceHandler(
+        event_bus,
+        deception_controller=controller,
+        adaptive_deception_enabled=True,
+    )
+    published = []
+
+    event_bus.subscribe(
+        "morpheus.intelligence.analysis",
+        published.append,
+    )
+
+    events = build_session_events()
+    for event in events:
+        handler.handle(event)
+
+    # A duplicate close must not trigger another adaptation.
+    handler.handle(events[-1])
+
+    assert len(controller.calls) == 1
+    assert len(published) == 1
+    assert published[0].data["deception"]["enabled"] is True
+    assert published[0].data["deception"]["applied"] is True
+    assert (
+        published[0].data["deception"]["plan"]["personality_name"]
+        == "test_personality"
+    )
+
+
+def test_deception_failure_does_not_suppress_analysis():
+    event_bus = EventBus()
+    controller = FakeDeceptionController(should_fail=True)
+    handler = IntelligenceHandler(
+        event_bus,
+        deception_controller=controller,
+        adaptive_deception_enabled=True,
+    )
+    published = []
+
+    event_bus.subscribe(
+        "morpheus.intelligence.analysis",
+        published.append,
+    )
+
+    for event in build_session_events():
+        handler.handle(event)
+
+    assert len(controller.calls) == 1
+    assert len(published) == 1
+    assert published[0].data["risk_assessment"]["score"] > 0
+    assert published[0].data["deception"] == {
+        "enabled": True,
+        "applied": False,
+        "error": "RuntimeError",
+    }
+
+
+def test_enabling_adaptive_deception_requires_controller():
+    try:
+        IntelligenceHandler(
+            EventBus(),
+            adaptive_deception_enabled=True,
+        )
+    except ValueError as exc:
+        assert "requires an explicit controller" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError without a controller")
