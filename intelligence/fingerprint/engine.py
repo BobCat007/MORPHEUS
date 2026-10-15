@@ -101,19 +101,18 @@ class FingerprintEngine:
         self,
         session: ReconstructedSession,
     ) -> str:
-        """Generate a stable fingerprint ID from behavioral attributes."""
+        """Generate a stable ID from SSH client-profile attributes."""
 
-        behavior = "|".join(
+        client_profile = "|".join(
             [
                 session.protocol or "",
                 session.hassh or "",
                 session.client_version or "",
-                ",".join(sorted(session.commands)),
             ]
         )
 
         return hashlib.sha256(
-            behavior.encode("utf-8")
+            client_profile.encode("utf-8")
         ).hexdigest()[:16]
 
     def get_all(

@@ -39,7 +39,7 @@ def test_identical_behavior_creates_same_fingerprint():
     assert fingerprint_one.successful_login_count == 2
 
 
-def test_different_behavior_creates_different_fingerprint():
+def test_different_commands_keep_same_client_profile_fingerprint():
     engine = FingerprintEngine()
 
     session_one = ReconstructedSession(
@@ -65,7 +65,9 @@ def test_different_behavior_creates_different_fingerprint():
     fingerprint_one = engine.process(session_one)
     fingerprint_two = engine.process(session_two)
 
-    assert fingerprint_one.fingerprint_id != fingerprint_two.fingerprint_id
+    assert fingerprint_one.fingerprint_id == fingerprint_two.fingerprint_id
+    assert fingerprint_one.session_count == 2
+    assert fingerprint_one.command_count == 5
 
 
 def test_average_session_duration():

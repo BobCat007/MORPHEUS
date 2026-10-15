@@ -75,7 +75,7 @@ def test_multiple_intents_are_scored():
     assert assessment.factor_count() == 2
 
 
-def test_fingerprint_adds_risk():
+def test_fingerprint_alone_does_not_add_risk():
     session = ReconstructedSession(
         session_id="session-1",
     )
@@ -91,9 +91,9 @@ def test_fingerprint_adds_risk():
         fingerprint=fingerprint,
     )
 
-    assert assessment.score == 10
+    assert assessment.score == 0
+    assert assessment.factor_count() == 0
     assert assessment.fingerprint_id is None
-    assert assessment.factors[0].name == "behavioral_fingerprint"
 
 
 def test_campaign_adds_risk():
@@ -216,10 +216,10 @@ def test_complete_assessment_combines_multiple_intelligence_sources():
         network=network,
     )
 
-    assert assessment.score == 85
-    assert assessment.severity == "critical"
+    assert assessment.score == 75
+    assert assessment.severity == "high"
 
-    assert assessment.factor_count() == 6
+    assert assessment.factor_count() == 5
     assert assessment.campaign_id == "campaign-123"
 
     factor_names = {
@@ -231,7 +231,6 @@ def test_complete_assessment_combines_multiple_intelligence_sources():
         "successful_authentication",
         "intent_credential_access",
         "intent_execution",
-        "behavioral_fingerprint",
         "campaign_correlation",
         "network_attribution",
     }

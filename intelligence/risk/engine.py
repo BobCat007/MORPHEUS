@@ -36,11 +36,6 @@ class RiskScoringEngine:
             intents,
         )
 
-        self._score_fingerprint(
-            assessment,
-            fingerprint,
-        )
-
         self._score_campaign(
             assessment,
             campaign,
@@ -111,36 +106,6 @@ class RiskScoringEngine:
             )
 
             assessment.add_factor(factor)
-
-    def _score_fingerprint(
-        self,
-        assessment: RiskAssessment,
-        fingerprint: Optional[AttackerFingerprint],
-    ) -> None:
-        """Score known behavioral fingerprint information."""
-
-        if fingerprint is None:
-            return
-
-        if fingerprint.session_count <= 0:
-            return
-
-        factor = RiskFactor(
-            name="behavioral_fingerprint",
-            score=10,
-            category="behavior",
-        )
-
-        factor.add_evidence(
-            f"fingerprint {fingerprint.fingerprint_id}"
-        )
-
-        if fingerprint.session_count > 1:
-            factor.add_evidence(
-                f"observed across {fingerprint.session_count} sessions"
-            )
-
-        assessment.add_factor(factor)
 
     def _score_campaign(
         self,
