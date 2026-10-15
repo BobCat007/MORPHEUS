@@ -24,6 +24,7 @@ def run_cowrie_pipeline(log_path: str, storage_path: str) -> int:
         "cowrie.client.var",
         "cowrie.session.params",
         "cowrie.command.input",
+        "cowrie.command.failed",
         "cowrie.log.closed",
         "cowrie.session.closed",
     ]

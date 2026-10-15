@@ -42,16 +42,23 @@ def test_pipeline_persists_raw_events_and_intelligence_analysis(tmp_path):
             "input": "whoami",
         },
         {
-            "eventid": "cowrie.command.input",
+            "eventid": "cowrie.command.failed",
             "timestamp": "2026-10-14T10:00:05+00:00",
+            "session": session_id,
+            "input": "cat/etc/passwd ",
+            "message": "Command not found: cat/etc/passwd ",
+        },
+        {
+            "eventid": "cowrie.command.input",
+            "timestamp": "2026-10-14T10:00:06+00:00",
             "session": session_id,
             "input": "ls",
         },
         {
             "eventid": "cowrie.session.closed",
-            "timestamp": "2026-10-14T10:00:06+00:00",
+            "timestamp": "2026-10-14T10:00:07+00:00",
             "session": session_id,
-            "duration_ms": 5000,
+            "duration_ms": 6000,
         },
     ]
 
@@ -81,16 +88,32 @@ def test_pipeline_persists_raw_events_and_intelligence_analysis(tmp_path):
         for event in stored_events
         if event["event_type"] == "morpheus.intelligence.analysis"
     ]
+    failed_command_events = [
+        event
+        for event in raw_stored_events
+        if event["event_type"] == "cowrie.command.failed"
+    ]
 
     assert processed_count == len(raw_events)
     assert len(raw_stored_events) == len(raw_events)
+    assert len(failed_command_events) == 1
+    assert failed_command_events[0]["data"]["input"] == "cat/etc/passwd "
+    assert (
+        failed_command_events[0]["data"]["message"]
+        == "Command not found: cat/etc/passwd "
+    )
+
     assert len(analysis_events) == 1
 
     analysis = analysis_events[0]["data"]
 
     assert analysis["session"]["session_id"] == session_id
     assert analysis["session"]["source_ip"] == "192.0.2.25"
+
+    # Failed commands are stored as telemetry but aren't counted as
+    # successfully recorded command.input events.
     assert analysis["session"]["commands"] == ["whoami", "ls"]
+
     assert analysis["fingerprint"]["session_count"] == 1
     assert analysis["risk_assessment"]["score"] > 0
     assert analysis["recommended_actions"]
