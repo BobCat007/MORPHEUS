@@ -74,3 +74,4 @@ threat_intel/ip/data/
 
 # Local network intelligence databases
 threat_intel/network/data/
+reports/
