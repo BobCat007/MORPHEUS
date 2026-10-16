@@ -58,6 +58,7 @@ def run_live_cowrie_pipeline(
         event_bus,
         deception_controller=deception_controller,
         adaptive_deception_enabled=adaptive_deception_enabled,
+        prior_analysis_events=event_store.read_all(),
     )
     alerting_handler = AlertingHandler(
         event_bus,

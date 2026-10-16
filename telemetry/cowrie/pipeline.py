@@ -29,7 +29,10 @@ def run_cowrie_pipeline(
     event_bus = EventBus()
     event_store = EventStore(storage_path)
     storage_handler = EventStorageHandler(event_store)
-    intelligence_handler = IntelligenceHandler(event_bus)
+    prior_events = event_store.read_all()
+    intelligence_handler = IntelligenceHandler(
+        event_bus, prior_analysis_events=prior_events
+    )
     alerting_handler = AlertingHandler(
         event_bus,
         event_store,

@@ -5,6 +5,7 @@ from core.events.bus import EventBus
 from core.events.model import MorpheusEvent
 from deception.control.controller import DeceptionController
 from intelligence.campaign.detector import CampaignDetector
+from intelligence.campaign.persistence import restore_campaign_context
 from intelligence.fingerprint.engine import FingerprintEngine
 from intelligence.intent.classifier import IntentClassifier
 from intelligence.mitre.mapper import MitreMapper
@@ -21,6 +22,7 @@ class IntelligenceHandler:
         event_bus: EventBus,
         deception_controller: Optional[DeceptionController] = None,
         adaptive_deception_enabled: bool = False,
+        prior_analysis_events: Optional[list] = None,
     ) -> None:
         if adaptive_deception_enabled and deception_controller is None:
             raise ValueError(
@@ -41,6 +43,12 @@ class IntelligenceHandler:
 
         # Prevent duplicate close events from processing a session twice.
         self.processed_session_ids: Set[str] = set()
+        if prior_analysis_events:
+            self.processed_session_ids.update(
+                restore_campaign_context(
+                    self.campaign_detector, prior_analysis_events
+                )
+            )
 
     def handle(self, event: MorpheusEvent) -> None:
         """Reconstruct sessions and analyze each session when it closes."""
