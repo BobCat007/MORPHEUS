@@ -5,6 +5,8 @@ from typing import Optional
 
 from alerts.engine import AlertEngine
 from alerts.handler import ALERT_EVENT_TYPE, AlertingHandler
+from alerts.webhook import WebhookHandler
+from core.config.settings import settings
 from core.events.bus import EventBus
 from core.storage.event_store import EventStore
 from core.storage.handler import EventStorageHandler
@@ -40,6 +42,8 @@ def run_live_cowrie_pipeline(
     deception_controller: Optional[DeceptionController] = None,
     adaptive_deception_enabled: bool = False,
     alert_minimum_severity: str = "high",
+    webhook_url: Optional[str] = None,
+    webhook_timeout: Optional[float] = None,
 ) -> None:
     """Follow live Cowrie telemetry and persist qualifying security alerts.
 
@@ -61,6 +65,19 @@ def run_live_cowrie_pipeline(
         AlertEngine(minimum_severity=alert_minimum_severity),
     )
 
+    resolved_webhook_url = (
+        settings.webhook_url if webhook_url is None else webhook_url
+    )
+    resolved_webhook_timeout = (
+        settings.webhook_timeout
+        if webhook_timeout is None
+        else webhook_timeout
+    )
+    webhook_handler = WebhookHandler(
+        resolved_webhook_url,
+        timeout=resolved_webhook_timeout,
+    )
+
     for event_type in COWRIE_EVENT_TYPES:
         event_bus.subscribe(event_type, storage_handler.handle)
         event_bus.subscribe(event_type, intelligence_handler.handle)
@@ -69,6 +86,9 @@ def run_live_cowrie_pipeline(
     event_bus.subscribe(ANALYSIS_EVENT_TYPE, storage_handler.handle)
     event_bus.subscribe(ALERT_EVENT_TYPE, storage_handler.handle)
     event_bus.subscribe(ANALYSIS_EVENT_TYPE, alerting_handler.handle)
+
+    # Delivery failures are contained by WebhookHandler.
+    event_bus.subscribe(ALERT_EVENT_TYPE, webhook_handler.handle)
 
     follower = CowrieLogFollower(
         log_path=log_path,
