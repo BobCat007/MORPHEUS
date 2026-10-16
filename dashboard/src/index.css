@@ -1,0 +1,36 @@
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+:root {
+  font-family: 'DM Sans', sans-serif;
+  color: #e7edf7;
+  background: #080c14;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  --bg: #080c14;
+  --panel: #0d1420;
+  --panel-raised: #111b2a;
+  --border: #202c3d;
+  --muted: #8190a5;
+  --text: #e7edf7;
+  --blue: #55a5ff;
+  --green: #45d5a2;
+  --red: #ff6178;
+  --amber: #f2b95f;
+  --purple: #ad8bff;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+body, button, input, select { font-family: 'DM Sans', sans-serif; }
+button, input, select { font-size: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .65; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #55a5ff; outline-offset: 3px; }
+::selection { background: #245c8f; color: #fff; }
+a { color: inherit; }
+#root { min-height: 100vh; }

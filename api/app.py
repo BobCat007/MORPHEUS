@@ -18,6 +18,7 @@ from incidents.service import (
 
 
 ALERT_EVENT_TYPE = "morpheus.alert.created"
+ANALYSIS_EVENT_TYPE = "morpheus.intelligence.analysis"
 SEVERITIES = ("low", "medium", "high", "critical")
 
 
@@ -41,6 +42,16 @@ def _read_events(storage_path: str) -> List[Dict[str, Any]]:
         )
 
 
+def _newest_first(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Sort events newest first using their stored timestamps."""
+
+    return sorted(
+        events,
+        key=lambda event: str(event.get("timestamp") or ""),
+        reverse=True,
+    )
+
+
 def _alert_events(storage_path: str) -> List[Dict[str, Any]]:
     """Return stored alert events, newest first."""
 
@@ -50,11 +61,63 @@ def _alert_events(storage_path: str) -> List[Dict[str, Any]]:
         if event.get("event_type") == ALERT_EVENT_TYPE
         and isinstance(event.get("data"), dict)
     ]
-    return sorted(
-        events,
-        key=lambda event: str(event.get("timestamp") or ""),
-        reverse=True,
-    )
+    return _newest_first(events)
+
+
+
+def _analysis_events(storage_path: str) -> List[Dict[str, Any]]:
+    """Return valid intelligence-analysis events, newest first.
+
+    Risk score breaks ties when events have the same timestamp.
+    """
+
+    events = []
+
+    for event in _read_events(storage_path):
+        if event.get("event_type") != ANALYSIS_EVENT_TYPE:
+            continue
+
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+
+        session = data.get("session")
+        risk = data.get("risk_assessment")
+
+        if not isinstance(session, dict) or not isinstance(risk, dict):
+            continue
+
+        events.append(event)
+
+    def sort_key(event: Dict[str, Any]) -> Any:
+        data = event.get("data", {})
+        risk = data.get("risk_assessment", {})
+        score = risk.get("score", 0)
+
+        try:
+            score = float(score)
+        except (TypeError, ValueError):
+            score = 0
+
+        return (
+            str(event.get("timestamp") or ""),
+            score,
+        )
+
+    return sorted(events, key=sort_key, reverse=True)
+
+
+def _analysis_severity(event: Dict[str, Any]) -> str:
+    """Get the normalized severity from an analysis event."""
+
+    data = event.get("data", {})
+    risk = data.get("risk_assessment", {})
+    severity = risk.get("severity", "unknown")
+
+    if not isinstance(severity, str):
+        return "unknown"
+
+    return severity.strip().lower()
 
 
 def create_app(storage_path: Optional[str] = None) -> FastAPI:
@@ -67,8 +130,10 @@ def create_app(storage_path: Optional[str] = None) -> FastAPI:
 
     application = FastAPI(
         title="MORPHEUS API",
-        description="Security alert and incident management API.",
-        version="1.0.0",
+        description=(
+            "Security alerts, analyzed sessions, and incident management API."
+        ),
+        version="1.1.0",
     )
     application.state.storage_path = resolved_path
 
@@ -80,15 +145,20 @@ def create_app(storage_path: Optional[str] = None) -> FastAPI:
 
     @application.get("/api/v1/dashboard")
     def dashboard() -> Dict[str, Any]:
-        """Summarize alert severity and incident lifecycle status."""
+        """Summarize alerts, analyzed sessions, and incident statuses."""
 
         storage = application.state.storage_path
         alerts = _alert_events(storage)
+        sessions = _analysis_events(storage)
 
         severity_counts = Counter(
-            event["data"].get("severity", "unknown")
+            str(event["data"].get("severity", "unknown")).lower()
             for event in alerts
         )
+        session_severity_counts = Counter(
+            _analysis_severity(event) for event in sessions
+        )
+
         incident_records = list_incidents(storage)
         incident_status_counts = Counter(
             incident.get("status", "unknown")
@@ -101,12 +171,18 @@ def create_app(storage_path: Optional[str] = None) -> FastAPI:
                 severity: severity_counts.get(severity, 0)
                 for severity in SEVERITIES
             },
+            "total_analyzed_sessions": len(sessions),
+            "sessions_by_severity": {
+                severity: session_severity_counts.get(severity, 0)
+                for severity in SEVERITIES
+            },
             "total_incidents": len(incident_records),
             "incidents_by_status": {
                 status: incident_status_counts.get(status, 0)
                 for status in VALID_STATUSES
             },
             "latest_alerts": alerts[:10],
+            "latest_sessions": sessions[:10],
         }
 
     @application.get("/api/v1/alerts")
@@ -138,6 +214,51 @@ def create_app(storage_path: Optional[str] = None) -> FastAPI:
             "total_matching": len(results),
             "items": results[:limit],
         }
+
+    @application.get("/api/v1/sessions")
+    def sessions(
+        severity: Optional[str] = Query(None),
+        limit: int = Query(100, ge=1, le=500),
+    ) -> Dict[str, Any]:
+        """List analyzed sessions, optionally filtered by risk severity."""
+
+        if severity is not None:
+            severity = severity.strip().lower()
+            if severity not in SEVERITIES:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Severity must be low, medium, high, or critical.",
+                )
+
+        results = _analysis_events(application.state.storage_path)
+
+        if severity is not None:
+            results = [
+                event
+                for event in results
+                if _analysis_severity(event) == severity
+            ]
+
+        return {
+            "count": len(results[:limit]),
+            "total_matching": len(results),
+            "items": results[:limit],
+        }
+
+    @application.get("/api/v1/sessions/{session_id}")
+    def session_detail(session_id: str) -> Dict[str, Any]:
+        """Return an analyzed session by its session identifier."""
+
+        results = _analysis_events(application.state.storage_path)
+
+        for event in results:
+            data = event.get("data", {})
+            session = data.get("session", {})
+
+            if session.get("session_id") == session_id:
+                return event
+
+        raise HTTPException(status_code=404, detail="Analyzed session not found.")
 
     @application.get("/api/v1/incidents")
     def incidents(
