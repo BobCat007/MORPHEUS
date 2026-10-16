@@ -1,6 +1,8 @@
+"""JSONL-backed event storage for MORPHEUS."""
+
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict, List
 
 
 class EventStore:
@@ -16,8 +18,44 @@ class EventStore:
         with self.file_path.open("a", encoding="utf-8") as file:
             file.write(json.dumps(event) + "\n")
 
+    def read_all(self) -> List[Dict[str, Any]]:
+        """Read all stored events in insertion order.
+
+        Blank lines are ignored. Invalid JSON or records that aren't JSON
+        objects raise ValueError with the relevant line number.
+        """
+
+        if not self.file_path.exists():
+            return []
+
+        events: List[Dict[str, Any]] = []
+
+        with self.file_path.open("r", encoding="utf-8") as file:
+            for line_number, line in enumerate(file, start=1):
+                if not line.strip():
+                    continue
+
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        "Invalid JSON in event store at line {}.".format(
+                            line_number
+                        )
+                    ) from exc
+
+                if not isinstance(event, dict):
+                    raise ValueError(
+                        "Event store record at line {} must be a JSON "
+                        "object.".format(line_number)
+                    )
+
+                events.append(event)
+
+        return events
+
     def count(self) -> int:
-        """Return the number of stored events."""
+        """Return the number of non-empty stored event records."""
 
         if not self.file_path.exists():
             return 0
