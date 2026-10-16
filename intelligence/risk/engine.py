@@ -83,6 +83,13 @@ class RiskScoringEngine:
         if not intents:
             return
 
+        sequence_evidence = {
+            item
+            for result in intents
+            if result.intent == "payload_execution_chain"
+            for item in result.evidence
+        }
+
         intent_scores = {
             "discovery": 10,
             "file_discovery": 10,
@@ -90,9 +97,20 @@ class RiskScoringEngine:
             "execution": 20,
             "credential_access": 25,
             "defense_evasion": 20,
+            "payload_execution_chain": 30,
         }
 
         for result in intents:
+            evidence = list(result.evidence)
+
+            if result.intent in {"payload_retrieval", "execution"}:
+                evidence = [
+                    item for item in evidence
+                    if item not in sequence_evidence
+                ]
+                if not evidence:
+                    continue
+
             score = intent_scores.get(
                 result.intent,
                 5,
@@ -102,7 +120,7 @@ class RiskScoringEngine:
                 name=f"intent_{result.intent}",
                 score=score,
                 category="behavior",
-                evidence=list(result.evidence),
+                evidence=evidence,
             )
 
             assessment.add_factor(factor)

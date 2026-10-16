@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional
 
 from intelligence.intent.model import IntentResult
+from intelligence.intent.sequence_detector import CommandSequenceDetector
 from intelligence.session.model import ReconstructedSession
 
 
@@ -110,5 +111,9 @@ class IntentClassifier:
                     phase=self.INTENT_PHASES.get(intent),
                 )
             )
+
+        sequence_finding = CommandSequenceDetector().detect(commands)
+        if sequence_finding is not None:
+            results.append(sequence_finding)
 
         return results
