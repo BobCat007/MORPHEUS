@@ -1,11 +1,12 @@
 
 """FastAPI application for the MORPHEUS security dashboard."""
 
+import hmac
 import os
 from collections import Counter
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from core.storage.event_store import EventStore
@@ -120,7 +121,10 @@ def _analysis_severity(event: Dict[str, Any]) -> str:
     return severity.strip().lower()
 
 
-def create_app(storage_path: Optional[str] = None) -> FastAPI:
+def create_app(
+    storage_path: Optional[str] = None,
+    write_token: Optional[str] = None,
+) -> FastAPI:
     """Create an application using a specified or configured event store."""
 
     resolved_path = storage_path or os.getenv(
@@ -317,8 +321,33 @@ def create_app(storage_path: Optional[str] = None) -> FastAPI:
     def change_incident_status(
         incident_id: str,
         request: IncidentStatusUpdate,
+        supplied_token: Optional[str] = Header(
+            None, alias="X-Morpheus-Write-Token"
+        ),
     ) -> Dict[str, Any]:
-        """Append an incident status change to the event store."""
+        """Append an incident status change after authenticating the caller."""
+
+        expected_token = (
+            write_token
+            if write_token is not None
+            else os.getenv("MORPHEUS_API_WRITE_TOKEN", "")
+        )
+
+        if not expected_token:
+            raise HTTPException(
+                status_code=503,
+                detail="Incident updates are disabled: write token is not configured.",
+            )
+
+
+        if not supplied_token or not hmac.compare_digest(
+            supplied_token, expected_token
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="Missing or invalid incident write token.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
         try:
             return update_incident_status(

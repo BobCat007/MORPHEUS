@@ -42,8 +42,10 @@ def _alert(
 def _client(tmp_path, events=None):
     storage_path = tmp_path / "api-events.jsonl"
     _write_events(storage_path, events or [])
-    app = create_app(str(storage_path))
-    return TestClient(app), storage_path
+    app = create_app(str(storage_path), write_token="test-write-token")
+    client = TestClient(app)
+    client.headers.update({"X-Morpheus-Write-Token": "test-write-token"})
+    return client, storage_path
 
 
 def test_health_endpoint(tmp_path):
@@ -210,3 +212,48 @@ def test_invalid_request_body_returns_422(tmp_path):
     )
 
     assert response.status_code == 422
+
+
+def test_incident_update_rejects_missing_token(tmp_path):
+    client, storage_path = _client(
+        tmp_path, [_alert("auth-alert", "high", "auth-session")]
+    )
+    client.headers.pop("X-Morpheus-Write-Token", None)
+    original_events = storage_path.read_text(encoding="utf-8")
+
+    response = client.patch(
+        "/api/v1/incidents/MORPHEUS-INC-auth-alert/status",
+        json={"status": "acknowledged"},
+    )
+
+    assert response.status_code == 401
+    assert storage_path.read_text(encoding="utf-8") == original_events
+
+
+def test_incident_update_rejects_invalid_token(tmp_path):
+    client, storage_path = _client(
+        tmp_path, [_alert("auth-alert", "high", "auth-session")]
+    )
+    original_events = storage_path.read_text(encoding="utf-8")
+
+    response = client.patch(
+        "/api/v1/incidents/MORPHEUS-INC-auth-alert/status",
+        headers={"X-Morpheus-Write-Token": "wrong-token"},
+        json={"status": "acknowledged"},
+    )
+
+    assert response.status_code == 401
+    assert storage_path.read_text(encoding="utf-8") == original_events
+
+
+def test_incident_update_fails_closed_without_configured_token(tmp_path):
+    storage_path = tmp_path / "unconfigured-events.jsonl"
+    _write_events(storage_path, [_alert("auth-alert", "high", "auth-session")])
+    client = TestClient(create_app(str(storage_path), write_token=""))
+
+    response = client.patch(
+        "/api/v1/incidents/MORPHEUS-INC-auth-alert/status",
+        json={"status": "acknowledged"},
+    )
+
+    assert response.status_code == 503
