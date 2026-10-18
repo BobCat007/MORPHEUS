@@ -41,34 +41,101 @@ class CowrieAdapter(DeceptionAdapter):
     ) -> None:
         self.config_path = Path(config_path)
         if (filesystem_base_path is None) != (filesystem_output_path is None):
-            raise ValueError("Filesystem baseline and output paths must be configured together.")
-        self.filesystem_base_path = Path(filesystem_base_path) if filesystem_base_path else None
-        self.filesystem_output_path = Path(filesystem_output_path) if filesystem_output_path else None
+            raise ValueError(
+                "Filesystem baseline and output paths must be configured together."
+            )
+        self.filesystem_base_path = (
+            Path(filesystem_base_path) if filesystem_base_path else None
+        )
+        self.filesystem_output_path = (
+            Path(filesystem_output_path) if filesystem_output_path else None
+        )
         self.filesystem_config_path = filesystem_config_path
         if self.filesystem_base_path and not self.filesystem_config_path:
-            raise ValueError("filesystem_config_path is required for filesystem generation.")
+            raise ValueError(
+                "filesystem_config_path is required for filesystem generation."
+            )
+
+    def snapshot_state(self) -> dict:
+        """Capture config and generated filesystem bytes and permissions."""
+        paths = [self.config_path]
+        if self.filesystem_output_path is not None:
+            paths.append(self.filesystem_output_path)
+
+        snapshot = {}
+        for path in paths:
+            exists = path.exists()
+            snapshot[str(path)] = {
+                "exists": exists,
+                "content": path.read_bytes() if exists else None,
+                "mode": path.stat().st_mode & 0o777 if exists else None,
+            }
+        return snapshot
+
+    def restore_state(self, snapshot: dict) -> None:
+        """Restore config and generated filesystem from a prior snapshot."""
+        paths = [self.config_path]
+        if self.filesystem_output_path is not None:
+            paths.append(self.filesystem_output_path)
+
+        for path in paths:
+            state = snapshot[str(path)]
+            if not state["exists"]:
+                path.unlink(missing_ok=True)
+                continue
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary = tempfile.mkstemp(
+                prefix=path.name + ".rollback.",
+                suffix=".tmp",
+                dir=str(path.parent),
+            )
+            try:
+                with os.fdopen(descriptor, "wb") as handle:
+                    handle.write(state["content"])
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.chmod(temporary, state["mode"])
+                os.replace(temporary, str(path))
+            except Exception:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+                raise
 
     def _write_personality_filesystem(self, paths: List[str]) -> None:
-        # Build a verified filesystem from the original Cowrie baseline.
+        """Build a verified filesystem from the original Cowrie baseline."""
         if self.filesystem_base_path is None:
             return
-        from deception.personality.cowrie_fs import build_cowrie_tree, verify_cowrie_tree
+
+        from deception.personality.cowrie_fs import (
+            build_cowrie_tree,
+            verify_cowrie_tree,
+        )
+
         with self.filesystem_base_path.open("rb") as source:
             baseline = pickle.load(source)
+
         derived = build_cowrie_tree(baseline, paths)
         verify_cowrie_tree(derived, paths)
+
         output = self.filesystem_output_path
         output.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(
-            prefix=output.name + ".", suffix=".tmp", dir=str(output.parent)
+            prefix=output.name + ".",
+            suffix=".tmp",
+            dir=str(output.parent),
         )
         try:
             with os.fdopen(descriptor, "wb") as destination:
                 pickle.dump(derived, destination, protocol=4)
                 destination.flush()
                 os.fsync(destination.fileno())
+
             with open(temporary, "rb") as check:
                 verify_cowrie_tree(pickle.load(check), paths)
+
             os.replace(temporary, str(output))
         except Exception:
             try:
@@ -100,24 +167,19 @@ class CowrieAdapter(DeceptionAdapter):
             match = section_pattern.match(line.rstrip("\r\n"))
             if not match:
                 continue
-
             if section_start is not None:
                 section_end = index
                 break
-
             if match.group(1).strip().lower() == section_name.lower():
                 section_start = index
 
         replacement = "{} = {}\n".format(option_name, value)
-
         if section_start is None:
             if lines and not lines[-1].endswith(("\n", "\r")):
                 lines[-1] += "\n"
             if lines and lines[-1].strip():
                 lines.append("\n")
-            lines.extend(
-                ["[{}]\n".format(section_name), replacement]
-            )
+            lines.extend(["[{}]\n".format(section_name), replacement])
             return lines
 
         for index in range(section_start + 1, section_end):
@@ -134,7 +196,6 @@ class CowrieAdapter(DeceptionAdapter):
     def _write_config(self, lines: List[str]) -> None:
         """Atomically replace the config after preparing the new contents."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-
         existing_mode = (
             self.config_path.stat().st_mode & 0o777
             if self.config_path.exists()
@@ -146,7 +207,6 @@ class CowrieAdapter(DeceptionAdapter):
             suffix=".tmp",
             dir=str(self.config_path.parent),
         )
-
         try:
             with os.fdopen(
                 descriptor, "w", encoding="utf-8", newline=""
@@ -154,7 +214,6 @@ class CowrieAdapter(DeceptionAdapter):
                 handle.writelines(lines)
                 handle.flush()
                 os.fsync(handle.fileno())
-
             os.chmod(temporary_path, existing_mode)
             os.replace(temporary_path, str(self.config_path))
         except Exception:
@@ -171,9 +230,7 @@ class CowrieAdapter(DeceptionAdapter):
             or "\n" in plan.hostname
             or "\r" in plan.hostname
         ):
-            raise ValueError(
-                "A valid, single-line hostname is required."
-            )
+            raise ValueError("A valid, single-line hostname is required.")
 
         # Prepare and verify selected assets before changing the config.
         self._write_personality_filesystem(plan.fake_assets)
@@ -182,7 +239,9 @@ class CowrieAdapter(DeceptionAdapter):
             if self.config_path.exists()
             else []
         )
-        lines = self._set_option(lines, "honeypot", "hostname", plan.hostname)
+        lines = self._set_option(
+            lines, "honeypot", "hostname", plan.hostname
+        )
         if self.filesystem_config_path:
             lines = self._set_option(
                 lines, "shell", "filesystem", self.filesystem_config_path
@@ -191,7 +250,6 @@ class CowrieAdapter(DeceptionAdapter):
         fingerprint = self._OS_FINGERPRINTS.get(
             plan.operating_system.strip().lower()
         )
-
         if fingerprint:
             for option in (
                 "kernel_version",
@@ -203,7 +261,6 @@ class CowrieAdapter(DeceptionAdapter):
                 lines = self._set_option(
                     lines, "shell", option, fingerprint[option]
                 )
-
             lines = self._set_option(
                 lines,
                 "ssh",
@@ -216,14 +273,11 @@ class CowrieAdapter(DeceptionAdapter):
     def current_state(self) -> DeceptionPlan:
         """Return the hostname currently configured in Cowrie."""
         config = ConfigParser(interpolation=None)
-
         if self.config_path.exists():
             config.read(str(self.config_path), encoding="utf-8")
-
         hostname = config.get(
             "honeypot", "hostname", fallback="unknown"
         )
-
         return DeceptionPlan(
             personality_name="unknown",
             hostname=hostname,

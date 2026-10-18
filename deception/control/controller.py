@@ -26,29 +26,50 @@ class DeceptionController:
         self,
         assessment: RiskAssessment,
     ) -> DeceptionPlan:
-        """Select and apply a personality only when Cowrie is running."""
+        """Apply a risk-selected plan, attempting rollback on failure."""
         personality = self.personality_engine.select(assessment)
-
         if personality is None:
-            raise ValueError(
-                "No enabled honeypot personality is available."
-            )
+            raise ValueError("No enabled honeypot personality is available.")
 
         # Check service state before touching its configuration.
         if not self.lifecycle.is_running():
             raise RuntimeError("Deception service is not running.")
 
         plan = self.planner.build_plan(personality)
-
-        # Avoid restarting Cowrie when this controller already applied
-        # the exact same plan successfully during its current lifetime.
         if plan == self._last_applied_plan:
             return plan
 
-        self.adapter.apply(plan)
-        self.lifecycle.restart()
-        self._last_applied_plan = plan
+        snapshot_method = getattr(self.adapter, "snapshot_state", None)
+        restore_method = getattr(self.adapter, "restore_state", None)
+        snapshot = (
+            snapshot_method()
+            if callable(snapshot_method) and callable(restore_method)
+            else None
+        )
 
+        apply_completed = False
+        try:
+            self.adapter.apply(plan)
+            apply_completed = True
+            self.lifecycle.restart()
+        except Exception as operation_error:
+            if snapshot is not None and callable(restore_method):
+                try:
+                    restore_method(snapshot)
+                    # If apply failed, restore files without restarting.
+                    # If restart failed, attempt recovery with restored files.
+                    if apply_completed:
+                        self.lifecycle.restart()
+                except Exception as rollback_error:
+                    raise RuntimeError(
+                        "Adaptive deception failed: {}; "
+                        "rollback/recovery also failed: {}".format(
+                            operation_error, rollback_error
+                        )
+                    ) from rollback_error
+            raise
+
+        self._last_applied_plan = plan
         return plan
 
     def current_state(self) -> DeceptionPlan:
