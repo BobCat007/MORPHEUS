@@ -1,9 +1,8 @@
 from typing import Dict, List, Optional
 
 from intelligence.intent.model import IntentResult
-from intelligence.intent.sequence_detector import CommandSequenceDetector
 from intelligence.session.model import ReconstructedSession
-
+from intelligence.intent.sequence_detector import CommandSequenceDetector
 
 class IntentClassifier:
     """Infer attacker intent from observed commands and session behavior."""
@@ -61,7 +60,28 @@ class IntentClassifier:
         "payload_retrieval": "delivery",
         "execution": "execution",
         "credential_access": "credential_access",
+        "sensitive_file_access": "collection",
         "defense_evasion": "defense_evasion",
+    }
+
+    SENSITIVE_PATHS = (
+        "/var/backups/",
+        "/opt/company/config/",
+        "/home/backup/credentials.txt",
+        "/opt/company/secrets.env",
+        "/srv/share/",
+        "/home/administrator/.ssh/",
+    )
+
+    FILE_READ_COMMANDS = {
+        "cat",
+        "less",
+        "more",
+        "head",
+        "tail",
+        "grep",
+        "sed",
+        "awk",
     }
 
     def classify(
@@ -89,6 +109,25 @@ class IntentClassifier:
                         scores[intent] = scores.get(intent, 0) + 1
                         evidence.setdefault(intent, []).append(command)
                         break
+
+            # Detect reads of known sensitive paths without treating every
+            # file read or directory listing as sensitive access.
+            tokens = normalized.split()
+            executable = tokens[0].rsplit("/", 1)[-1] if tokens else ""
+
+            if (
+                executable in self.FILE_READ_COMMANDS
+                and any(
+                    path in normalized
+                    for path in self.SENSITIVE_PATHS
+                )
+            ):
+                scores["sensitive_file_access"] = (
+                    scores.get("sensitive_file_access", 0) + 1
+                )
+                evidence.setdefault(
+                    "sensitive_file_access", []
+                ).append(command)
 
         if not scores:
             return []

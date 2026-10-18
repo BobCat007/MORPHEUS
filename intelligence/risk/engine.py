@@ -1,3 +1,4 @@
+
 from typing import List, Optional
 
 from intelligence.campaign.model import AttackCampaign
@@ -26,25 +27,10 @@ class RiskScoringEngine:
             source_ip=session.source_ip,
         )
 
-        self._score_authentication(
-            assessment,
-            session,
-        )
-
-        self._score_intents(
-            assessment,
-            intents,
-        )
-
-        self._score_campaign(
-            assessment,
-            campaign,
-        )
-
-        self._score_network(
-            assessment,
-            network,
-        )
+        self._score_authentication(assessment, session)
+        self._score_intents(assessment, intents)
+        self._score_campaign(assessment, campaign)
+        self._score_network(assessment, network)
 
         assessment.finalize()
 
@@ -93,6 +79,7 @@ class RiskScoringEngine:
         intent_scores = {
             "discovery": 10,
             "file_discovery": 10,
+            "sensitive_file_access": 10,
             "payload_retrieval": 20,
             "execution": 20,
             "credential_access": 25,
@@ -105,16 +92,14 @@ class RiskScoringEngine:
 
             if result.intent in {"payload_retrieval", "execution"}:
                 evidence = [
-                    item for item in evidence
+                    item
+                    for item in evidence
                     if item not in sequence_evidence
                 ]
                 if not evidence:
                     continue
 
-            score = intent_scores.get(
-                result.intent,
-                5,
-            )
+            score = intent_scores.get(result.intent, 5)
 
             factor = RiskFactor(
                 name=f"intent_{result.intent}",
@@ -170,13 +155,9 @@ class RiskScoringEngine:
                 category="network",
             )
 
-            factor.add_evidence(
-                network.asn
-            )
+            factor.add_evidence(network.asn)
 
             if network.organization:
-                factor.add_evidence(
-                    network.organization
-                )
+                factor.add_evidence(network.organization)
 
             assessment.add_factor(factor)

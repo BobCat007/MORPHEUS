@@ -277,3 +277,31 @@ def test_payload_execution_chain_avoids_double_counting_components():
         "chmod +x payload",
         "./payload",
     ]
+
+
+def test_sensitive_file_access_adds_explainable_risk():
+    session = ReconstructedSession(
+        session_id="sensitive-file-session",
+    )
+
+    intents = [
+        IntentResult(
+            intent="sensitive_file_access",
+            confidence=1.0,
+            evidence=["cat /var/backups/customer_db.sql"],
+            phase="collection",
+        )
+    ]
+
+    assessment = RiskScoringEngine().assess(
+        session=session,
+        intents=intents,
+    )
+
+    assert assessment.score == 10
+    assert assessment.severity == "low"
+    assert assessment.factors[0].name == "intent_sensitive_file_access"
+    assert assessment.factors[0].evidence == [
+        "cat /var/backups/customer_db.sql"
+    ]
+
