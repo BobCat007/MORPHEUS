@@ -20,6 +20,7 @@ class DeceptionController:
         self.planner = planner
         self.adapter = adapter
         self.lifecycle = lifecycle
+        self._last_applied_plan = None
 
     def apply_for_risk(
         self,
@@ -38,8 +39,15 @@ class DeceptionController:
             raise RuntimeError("Deception service is not running.")
 
         plan = self.planner.build_plan(personality)
+
+        # Avoid restarting Cowrie when this controller already applied
+        # the exact same plan successfully during its current lifetime.
+        if plan == self._last_applied_plan:
+            return plan
+
         self.adapter.apply(plan)
         self.lifecycle.restart()
+        self._last_applied_plan = plan
 
         return plan
 

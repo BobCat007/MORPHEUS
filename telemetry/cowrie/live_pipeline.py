@@ -50,6 +50,10 @@ def run_live_cowrie_pipeline(
     Existing log history is skipped by default. Set start_at_end=False
     to process existing records as well.
     """
+    if adaptive_deception_enabled and deception_controller is None:
+        from deception.control.factory import create_cowrie_deception_controller
+        deception_controller = create_cowrie_deception_controller()
+
     event_bus = EventBus()
     event_store = EventStore(storage_path)
     storage_handler = EventStorageHandler(event_store)

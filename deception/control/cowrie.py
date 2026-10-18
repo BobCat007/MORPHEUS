@@ -1,4 +1,5 @@
 import os
+import pickle
 import re
 import tempfile
 from configparser import ConfigParser
@@ -31,8 +32,50 @@ class CowrieAdapter(DeceptionAdapter):
         },
     }
 
-    def __init__(self, config_path: str) -> None:
+    def __init__(
+        self,
+        config_path: str,
+        filesystem_base_path: Optional[str] = None,
+        filesystem_output_path: Optional[str] = None,
+        filesystem_config_path: Optional[str] = None,
+    ) -> None:
         self.config_path = Path(config_path)
+        if (filesystem_base_path is None) != (filesystem_output_path is None):
+            raise ValueError("Filesystem baseline and output paths must be configured together.")
+        self.filesystem_base_path = Path(filesystem_base_path) if filesystem_base_path else None
+        self.filesystem_output_path = Path(filesystem_output_path) if filesystem_output_path else None
+        self.filesystem_config_path = filesystem_config_path
+        if self.filesystem_base_path and not self.filesystem_config_path:
+            raise ValueError("filesystem_config_path is required for filesystem generation.")
+
+    def _write_personality_filesystem(self, paths: List[str]) -> None:
+        # Build a verified filesystem from the original Cowrie baseline.
+        if self.filesystem_base_path is None:
+            return
+        from deception.personality.cowrie_fs import build_cowrie_tree, verify_cowrie_tree
+        with self.filesystem_base_path.open("rb") as source:
+            baseline = pickle.load(source)
+        derived = build_cowrie_tree(baseline, paths)
+        verify_cowrie_tree(derived, paths)
+        output = self.filesystem_output_path
+        output.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=output.name + ".", suffix=".tmp", dir=str(output.parent)
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as destination:
+                pickle.dump(derived, destination, protocol=4)
+                destination.flush()
+                os.fsync(destination.fileno())
+            with open(temporary, "rb") as check:
+                verify_cowrie_tree(pickle.load(check), paths)
+            os.replace(temporary, str(output))
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
 
     @staticmethod
     def _set_option(
@@ -132,15 +175,18 @@ class CowrieAdapter(DeceptionAdapter):
                 "A valid, single-line hostname is required."
             )
 
+        # Prepare and verify selected assets before changing the config.
+        self._write_personality_filesystem(plan.fake_assets)
         lines = (
             self.config_path.read_text(encoding="utf-8").splitlines(True)
             if self.config_path.exists()
             else []
         )
-
-        lines = self._set_option(
-            lines, "honeypot", "hostname", plan.hostname
-        )
+        lines = self._set_option(lines, "honeypot", "hostname", plan.hostname)
+        if self.filesystem_config_path:
+            lines = self._set_option(
+                lines, "shell", "filesystem", self.filesystem_config_path
+            )
 
         fingerprint = self._OS_FINGERPRINTS.get(
             plan.operating_system.strip().lower()

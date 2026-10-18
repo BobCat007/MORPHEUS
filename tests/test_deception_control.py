@@ -14,8 +14,10 @@ from intelligence.risk.model import RiskAssessment
 class FakeAdapter:
     def __init__(self):
         self.applied_plan = None
+        self.apply_calls = 0
 
     def apply(self, plan: DeceptionPlan) -> None:
+        self.apply_calls += 1
         self.applied_plan = plan
 
     def current_state(self) -> DeceptionPlan:
@@ -28,12 +30,14 @@ class FakeLifecycle:
     def __init__(self, running=True):
         self.running = running
         self.restart_called = False
+        self.restart_calls = 0
 
     def is_running(self) -> bool:
         return self.running
 
     def restart(self) -> None:
         self.restart_called = True
+        self.restart_calls += 1
 
 
 def make_assessment(severity="high", score=70):
@@ -69,6 +73,38 @@ def test_controller_applies_plan_and_restarts_service():
     assert plan.personality_name == "enterprise_database"
     assert adapter.applied_plan is plan
     assert lifecycle.restart_called is True
+
+
+def test_controller_skips_restart_for_identical_plan():
+    adapter = FakeAdapter()
+    lifecycle = FakeLifecycle()
+    controller = DeceptionController(
+        PersonalityEngine(), DeceptionPlanner(), adapter, lifecycle
+    )
+
+    first = controller.apply_for_risk(make_assessment())
+    second = controller.apply_for_risk(make_assessment())
+
+    assert first == second
+    assert adapter.apply_calls == 1
+    assert lifecycle.restart_calls == 1
+
+
+def test_controller_applies_and_restarts_when_plan_changes():
+    adapter = FakeAdapter()
+    lifecycle = FakeLifecycle()
+    controller = DeceptionController(
+        PersonalityEngine(), DeceptionPlanner(), adapter, lifecycle
+    )
+
+    first = controller.apply_for_risk(make_assessment(severity="high"))
+    second = controller.apply_for_risk(
+        make_assessment(severity="critical", score=95)
+    )
+
+    assert first.personality_name != second.personality_name
+    assert adapter.apply_calls == 2
+    assert lifecycle.restart_calls == 2
 
 
 def test_controller_checks_service_before_applying_plan():

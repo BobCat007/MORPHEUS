@@ -66,19 +66,31 @@ def test_live_pipeline_wires_follower_and_persists_events(
     assert "test-session" in stored_text
 
 
-def test_live_pipeline_rejects_adaptive_deception_without_controller(
-    tmp_path,
-):
+def test_live_pipeline_constructs_controller_when_enabled(tmp_path, monkeypatch):
     from threading import Event
-    import pytest
+    import deception.control.factory as factory
 
-    with pytest.raises(ValueError, match="controller"):
-        live_pipeline.run_live_cowrie_pipeline(
-            log_path=str(tmp_path / "cowrie.json"),
-            storage_path=str(tmp_path / "events.jsonl"),
-            stop_event=Event(),
-            adaptive_deception_enabled=True,
-        )
+    calls = []
+
+    class FakeFollower:
+        def __init__(self, log_path, event_bus, poll_interval, start_at_end):
+            pass
+        def run(self, stop_event):
+            pass
+
+    def build_controller():
+        calls.append(True)
+        return object()
+
+    monkeypatch.setattr(factory, "create_cowrie_deception_controller", build_controller)
+    monkeypatch.setattr(live_pipeline, "CowrieLogFollower", FakeFollower)
+    live_pipeline.run_live_cowrie_pipeline(
+        log_path=str(tmp_path / "cowrie.json"),
+        storage_path=str(tmp_path / "events.jsonl"),
+        stop_event=Event(),
+        adaptive_deception_enabled=True,
+    )
+    assert calls == [True]
 
 
 def test_live_pipeline_processes_appended_cowrie_record(tmp_path):
