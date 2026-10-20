@@ -47,6 +47,9 @@ htmlcov/
 # Malware samples - NEVER commit these
 samples/
 malware/
+# Keep the analyzer source code trackable; continue ignoring samples.
+!threat_intel/malware/
+!threat_intel/malware/*.py
 *.exe
 *.dll
 *.bin

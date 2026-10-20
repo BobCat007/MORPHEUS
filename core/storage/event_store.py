@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from threading import RLock
 from typing import Any, Dict, List
 
 
@@ -11,12 +12,15 @@ class EventStore:
     def __init__(self, file_path: str) -> None:
         self.file_path = Path(file_path)
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        self._write_lock = RLock()
 
     def save(self, event: Dict[str, Any]) -> None:
-        """Append an event to the persistent event store."""
+        """Append an event, serializing writes through this store instance."""
 
-        with self.file_path.open("a", encoding="utf-8") as file:
-            file.write(json.dumps(event) + "\n")
+        record = json.dumps(event) + "\n"
+        with self._write_lock:
+            with self.file_path.open("a", encoding="utf-8") as file:
+                file.write(record)
 
     def read_all(self) -> List[Dict[str, Any]]:
         """Read all stored events in insertion order.

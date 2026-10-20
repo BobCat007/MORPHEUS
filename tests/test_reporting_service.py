@@ -198,3 +198,20 @@ def test_service_raises_for_empty_store(tmp_path):
             session_id="empty-session",
             output_path=str(tmp_path / "incident.json"),
         )
+
+def test_event_store_serializes_concurrent_thread_writes(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = EventStore(str(tmp_path / "concurrent-events.jsonl"))
+    total = 200
+
+    def write_event(index):
+        store.save({"event_type": "test.concurrent", "index": index})
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        list(executor.map(write_event, range(total)))
+
+    events = store.read_all()
+    assert len(events) == total
+    assert {event["index"] for event in events} == set(range(total))
+    assert store.count() == total

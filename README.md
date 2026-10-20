@@ -359,11 +359,10 @@ MORPHEUS/
 
 ## Testing
 
-MORPHEUS currently has:
+Latest verified test run:
 
 ```text
-140 tests
-140 passed
+293 tests passed
 0 failed
 ```
 
@@ -447,19 +446,19 @@ MORPHEUS is being developed incrementally.
 
 ### Planned
 
-* [ ] Dynamic fake enterprise asset generation
+* [x] Dynamic fake enterprise asset generation
 * [ ] Cross-honeypot correlation
-* [ ] Attack campaign detection improvements
-* [ ] Attack timeline reconstruction enhancements
-* [ ] Automatic incident report generation
+* [x] Attack campaign detection improvements (automated tests present)
+* [x] Attack timeline reconstruction enhancements (implementation and tests present)
+* [x] Incident report generation (automated tests present)
 * [ ] Expanded deception services
-* [ ] Malware capture pipeline
-* [ ] Safe static malware analysis
+* [x] Malware artifact capture and event publication (initial implementation)
+* [x] Safe static malware analysis (heuristic, static-only; samples are not executed)
 * [ ] Distributed honeynet support
 * [ ] Threat knowledge base
 * [ ] Purple-team mode
-* [ ] SOC dashboard
-* [ ] REST API
+* [x] React SOC dashboard (build verified; one lint warning remains)
+* [x] REST API endpoints (automated tests present)
 * [ ] Real-time WebSocket telemetry
 * [ ] Advanced behavioral ML
 * [ ] Advanced attacker intent prediction
