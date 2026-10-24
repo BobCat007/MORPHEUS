@@ -8,16 +8,10 @@ from deception.control.planner import DeceptionPlanner
 from deception.personality.engine import PersonalityEngine
 
 
-def create_cowrie_deception_controller(project_root=None, container_name='morpheus-cowrie'):
-    root = Path(project_root) if project_root else Path(__file__).resolve().parents[2]
-    etc = root / 'deployment' / 'cowrie' / 'etc'
-    adapter = CowrieAdapter(
-        config_path=str(etc / 'cowrie.cfg'),
-        filesystem_base_path=str(etc / 'cowrie-bundled-fs.pickle'),
-        filesystem_output_path=str(etc / 'morpheus-fs.pickle'),
-        filesystem_config_path='/cowrie/cowrie-git/etc/morpheus-fs.pickle',
-    )
-    return DeceptionController(
-        PersonalityEngine(), DeceptionPlanner(), adapter,
-        CowrieLifecycle(container_name=container_name),
+def create_cowrie_deception_controller(project_root=None, container_name=None):
+    """Refuse controller creation until an explicitly isolated factory is used."""
+    raise RuntimeError(
+        "Production factory activation is disabled for safety. "
+        "Use create_test_cowrie_deception_controller() with the validated "
+        "morpheus-cowrie-test deployment."
     )

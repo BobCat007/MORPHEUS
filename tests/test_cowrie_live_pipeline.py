@@ -66,31 +66,47 @@ def test_live_pipeline_wires_follower_and_persists_events(
     assert "test-session" in stored_text
 
 
-def test_live_pipeline_constructs_controller_when_enabled(tmp_path, monkeypatch):
+def test_live_pipeline_requires_explicit_controller_when_enabled(tmp_path):
+    from threading import Event
+    import pytest
+
+    with pytest.raises(ValueError, match="requires an explicit controller"):
+        live_pipeline.run_live_cowrie_pipeline(
+            log_path=str(tmp_path / "cowrie.json"),
+            storage_path=str(tmp_path / "events.jsonl"),
+            stop_event=Event(),
+            adaptive_deception_enabled=True,
+        )
+
+
+def test_live_pipeline_accepts_explicit_controller_when_enabled(
+    tmp_path, monkeypatch
+):
     from threading import Event
     import deception.control.factory as factory
-
-    calls = []
 
     class FakeFollower:
         def __init__(self, log_path, event_bus, poll_interval, start_at_end):
             pass
+
         def run(self, stop_event):
             pass
 
-    def build_controller():
-        calls.append(True)
-        return object()
+    def forbidden_factory(*args, **kwargs):
+        raise AssertionError("Production factory must not be called implicitly")
 
-    monkeypatch.setattr(factory, "create_cowrie_deception_controller", build_controller)
+    monkeypatch.setattr(
+        factory, "create_cowrie_deception_controller", forbidden_factory
+    )
     monkeypatch.setattr(live_pipeline, "CowrieLogFollower", FakeFollower)
+
     live_pipeline.run_live_cowrie_pipeline(
         log_path=str(tmp_path / "cowrie.json"),
         storage_path=str(tmp_path / "events.jsonl"),
         stop_event=Event(),
         adaptive_deception_enabled=True,
+        deception_controller=object(),
     )
-    assert calls == [True]
 
 
 def test_live_pipeline_processes_appended_cowrie_record(tmp_path):

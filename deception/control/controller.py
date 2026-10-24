@@ -16,6 +16,15 @@ class DeceptionController:
         adapter: DeceptionAdapter,
         lifecycle: CowrieLifecycle,
     ) -> None:
+        if (
+            isinstance(lifecycle, CowrieLifecycle)
+            and lifecycle.container_name == "morpheus-cowrie"
+        ):
+            raise ValueError(
+                "Production Cowrie lifecycle is blocked in the adaptive "
+                "deception controller; use the isolated test container."
+            )
+
         self.personality_engine = personality_engine
         self.planner = planner
         self.adapter = adapter

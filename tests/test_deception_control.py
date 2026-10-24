@@ -259,3 +259,15 @@ def test_cowrie_adapter_separates_ssh_banner_from_shell_ssh_version(tmp_path):
     assert not shell_version.startswith("SSH-2.0-")
     assert protocol_version.startswith("SSH-2.0-OpenSSH_8.9p1")
     assert shell_version != protocol_version
+
+
+def test_controller_rejects_production_cowrie_lifecycle():
+    lifecycle = CowrieLifecycle(container_name="morpheus-cowrie")
+
+    with pytest.raises(ValueError, match="Production Cowrie lifecycle is blocked"):
+        DeceptionController(
+            PersonalityEngine(),
+            DeceptionPlanner(),
+            FakeAdapter(),
+            lifecycle,
+        )
