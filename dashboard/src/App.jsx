@@ -413,6 +413,62 @@ export default function App() {
     loadData()
   }, [loadData])
 
+  useEffect(() => {
+    let socket
+    let reconnectTimer
+    let refreshTimer
+    let disposed = false
+    let retryDelay = 1000
+
+    const connect = () => {
+      if (disposed) return
+
+      const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      socket = new WebSocket(`${scheme}//${window.location.host}${API}/stream`)
+
+      socket.onopen = () => {
+        retryDelay = 1000
+      }
+
+      socket.onmessage = (message) => {
+        let event
+        try {
+          event = JSON.parse(message.data)
+        } catch {
+          return
+        }
+
+        if (event?.type === 'stream.connected') return
+
+        // Batch bursts of events into one REST refresh.
+        if (refreshTimer) return
+        refreshTimer = window.setTimeout(() => {
+          refreshTimer = null
+          if (!disposed) loadData(true)
+        }, 300)
+      }
+
+      socket.onclose = () => {
+        if (disposed) return
+        reconnectTimer = window.setTimeout(connect, retryDelay)
+        retryDelay = Math.min(retryDelay * 2, 30000)
+      }
+
+      socket.onerror = () => {
+        socket?.close()
+      }
+    }
+
+    connect()
+
+    return () => {
+      disposed = true
+      socket?.close()
+      window.clearTimeout(reconnectTimer)
+      window.clearTimeout(refreshTimer)
+    }
+  }, [loadData])
+
   const visibleAlerts = useMemo(() => {
     const query = search.trim().toLowerCase()
     return alerts.filter((alert) => {

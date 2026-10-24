@@ -1,15 +1,18 @@
 
 """FastAPI application for the MORPHEUS security dashboard."""
 
+import asyncio
 import hmac
+import json
 import os
 from collections import Counter
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from core.storage.event_store import EventStore
+from pathlib import Path
 from incidents.service import (
     VALID_STATUSES,
     get_incident,
@@ -140,6 +143,66 @@ def create_app(
         version="1.1.0",
     )
     application.state.storage_path = resolved_path
+
+    @application.websocket("/api/v1/stream")
+    async def event_stream(websocket: WebSocket) -> None:
+        """Stream newly appended JSONL events; REST remains the history source."""
+        await websocket.accept()
+        await websocket.send_json({"type": "stream.connected"})
+
+        event_path = Path(application.state.storage_path)
+        handle = None
+        inode = None
+        offset = 0
+        pending = b""
+        max_event_bytes = 1024 * 1024
+
+        try:
+            while True:
+                try:
+                    current = event_path.stat()
+                except FileNotFoundError:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                if (
+                    handle is None
+                    or inode != current.st_ino
+                    or current.st_size < offset
+                ):
+                    if handle is not None:
+                        handle.close()
+                    handle = event_path.open("rb")
+                    inode = current.st_ino
+                    offset = current.st_size
+                    handle.seek(offset)
+                    pending = b""
+                elif current.st_size > offset:
+                    handle.seek(offset)
+                    chunk = handle.read(current.st_size - offset)
+                    offset += len(chunk)
+                    pending += chunk
+
+                    while b"\n" in pending:
+                        line, pending = pending.split(b"\n", 1)
+                        if not line.strip() or len(line) > max_event_bytes:
+                            continue
+                        try:
+                            event = json.loads(line)
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            continue
+                        if isinstance(event, dict):
+                            await websocket.send_json(event)
+
+                    if len(pending) > max_event_bytes:
+                        pending = b""
+
+                await asyncio.sleep(0.1)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            if handle is not None:
+                handle.close()
 
     @application.get("/api/v1/health")
     def health() -> Dict[str, str]:
