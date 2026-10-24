@@ -10,6 +10,7 @@ from core.config.settings import settings
 from core.events.bus import EventBus
 from core.storage.event_store import EventStore
 from core.storage.handler import EventStorageHandler
+from core.storage.pipeline_lock import single_instance_by_storage
 from deception.control.controller import DeceptionController
 from intelligence.handler import IntelligenceHandler
 from telemetry.cowrie.live import CowrieLogFollower
@@ -33,6 +34,7 @@ COWRIE_EVENT_TYPES = (
 )
 
 
+@single_instance_by_storage
 def run_live_cowrie_pipeline(
     log_path: str,
     storage_path: str,
