@@ -104,6 +104,7 @@ def test_campaign_adds_risk():
     campaign = AttackCampaign(
         campaign_id="campaign-123",
         session_ids=["session-1", "session-2"],
+        confidence_score=50,
         correlation_reasons=["same_hassh"],
     )
 
@@ -193,6 +194,7 @@ def test_complete_assessment_combines_multiple_intelligence_sources():
     campaign = AttackCampaign(
         campaign_id="campaign-123",
         session_ids=["session-1", "session-2"],
+        confidence_score=50,
         correlation_reasons=[
             "same_hassh",
             "shared_commands",
@@ -305,3 +307,45 @@ def test_sensitive_file_access_adds_explainable_risk():
         "cat /var/backups/customer_db.sql"
     ]
 
+
+
+
+def test_low_confidence_campaign_does_not_add_risk():
+    session = ReconstructedSession(session_id="session-1")
+
+    campaign = AttackCampaign(
+        campaign_id="weak-campaign",
+        session_ids=["session-1", "session-2"],
+        correlation_reasons=["same_source_ip"],
+        confidence_score=30,
+    )
+
+    assessment = RiskScoringEngine().assess(
+        session=session,
+        campaign=campaign,
+    )
+
+    assert assessment.score == 0
+    assert assessment.campaign_id is None
+    assert "campaign_correlation" not in {
+        factor.name for factor in assessment.factors
+    }
+
+
+def test_confident_campaign_adds_risk():
+    session = ReconstructedSession(session_id="session-1")
+
+    campaign = AttackCampaign(
+        campaign_id="confident-campaign",
+        session_ids=["session-1", "session-2"],
+        correlation_reasons=["same_source_ip", "shared_commands"],
+        confidence_score=40,
+    )
+
+    assessment = RiskScoringEngine().assess(
+        session=session,
+        campaign=campaign,
+    )
+
+    assert assessment.score == 15
+    assert assessment.campaign_id == "confident-campaign"

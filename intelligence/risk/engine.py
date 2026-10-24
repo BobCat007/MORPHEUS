@@ -123,6 +123,10 @@ class RiskScoringEngine:
         if len(campaign.session_ids) < 2:
             return
 
+        # Weak campaign correlations must not increase attacker risk.
+        if campaign.confidence_score < 40:
+            return
+
         factor = RiskFactor(
             name="campaign_correlation",
             score=15,
