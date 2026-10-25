@@ -53,6 +53,31 @@ def test_same_source_ip_alone_does_not_create_campaign():
     assert detector.get_all() == {}
 
 
+def test_same_client_version_alone_does_not_create_campaign():
+    detector = CampaignDetector()
+
+    session_one = build_session(
+        "session-1",
+        "10.0.0.1",
+        ["ls", "whoami"],
+        client_version="SSH-2.0-OpenSSH_8.2p1",
+        hassh="hassh-A",
+    )
+
+    session_two = build_session(
+        "session-2",
+        "10.0.0.2",
+        ["pwd", "hostname"],
+        client_version="SSH-2.0-OpenSSH_8.2p1",
+        hassh="hassh-B",
+    )
+
+    campaign = detector.correlate(session_one, session_two)
+
+    assert campaign is None
+    assert detector.get_all() == {}
+
+
 def test_same_hassh_creates_campaign():
     detector = CampaignDetector()
 
