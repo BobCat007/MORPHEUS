@@ -53,7 +53,16 @@ class CampaignDetector:
             intents_two,
         )
 
-        if not reasons:
+        # Source IP and client version are weak contextual signals.
+        # Require at least one stronger signal before correlating sessions.
+        strong_evidence = {
+            "same_hassh",
+            "same_fingerprint",
+            "shared_commands",
+            "shared_intent",
+        }
+
+        if not any(reason in strong_evidence for reason in reasons):
             return None
 
         campaigns = self._find_matching_campaigns(

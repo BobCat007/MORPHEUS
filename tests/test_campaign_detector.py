@@ -10,13 +10,15 @@ def build_session(
     commands: list,
     start_time: str = None,
     end_time: str = None,
+    client_version: str = "SSH-2.0-OpenSSH_8.2p1",
+    hassh: str = "abc123",
 ) -> ReconstructedSession:
     session = ReconstructedSession(
         session_id=session_id,
         source_ip=source_ip,
         protocol="ssh",
-        client_version="SSH-2.0-OpenSSH_8.2p1",
-        hassh="abc123",
+        client_version=client_version,
+        hassh=hassh,
         commands=commands,
         start_time=start_time,
         end_time=end_time,
@@ -26,32 +28,29 @@ def build_session(
     return session
 
 
-def test_same_source_ip_creates_campaign():
+def test_same_source_ip_alone_does_not_create_campaign():
     detector = CampaignDetector()
 
     session_one = build_session(
         "session-1",
         "10.0.0.1",
         ["ls", "whoami"],
+        client_version="SSH-2.0-ClientA",
+        hassh="hassh-A",
     )
 
     session_two = build_session(
         "session-2",
         "10.0.0.1",
         ["pwd", "hostname"],
+        client_version="SSH-2.0-ClientB",
+        hassh="hassh-B",
     )
 
-    campaign = detector.correlate(
-        session_one,
-        session_two,
-    )
+    campaign = detector.correlate(session_one, session_two)
 
-    assert campaign is not None
-    assert "same_source_ip" in campaign.correlation_reasons
-    assert campaign.session_ids == [
-        "session-1",
-        "session-2",
-    ]
+    assert campaign is None
+    assert detector.get_all() == {}
 
 
 def test_same_hassh_creates_campaign():
@@ -253,33 +252,31 @@ def test_related_sessions_are_aggregated_into_one_campaign():
     assert len(detector.get_all()) == 1
 
 
-def test_observe_session_automatically_correlates_with_previous_session():
+def test_observe_does_not_correlate_on_source_ip_alone():
     detector = CampaignDetector()
 
     session_one = build_session(
         "session-1",
         "10.0.0.1",
         ["ls", "whoami"],
+        client_version="SSH-2.0-ClientA",
+        hassh="hassh-A",
     )
 
     session_two = build_session(
         "session-2",
         "10.0.0.1",
         ["pwd", "hostname"],
+        client_version="SSH-2.0-ClientB",
+        hassh="hassh-B",
     )
 
     first_result = detector.observe(session_one)
     second_result = detector.observe(session_two)
 
     assert first_result is None
-    assert second_result is not None
-
-    assert second_result.session_ids == [
-        "session-1",
-        "session-2",
-    ]
-
-    assert "same_source_ip" in second_result.correlation_reasons
+    assert second_result is None
+    assert detector.get_all() == {}
 
 
 def test_observe_preserves_fingerprint_intelligence():
