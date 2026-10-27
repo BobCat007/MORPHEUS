@@ -666,3 +666,46 @@ def test_campaign_confidence_score_combines_all_evidence_types():
         "same_fingerprint": 20,
         "shared_intent": 10,
     }
+
+
+def test_common_commands_alone_do_not_create_campaign():
+    detector = CampaignDetector()
+
+    session_one = build_session(
+        "common-commands-1",
+        "10.0.0.10",
+        ["ls", "whoami", "pwd"],
+        client_version="SSH-2.0-ClientA",
+        hassh="hassh-A",
+    )
+    session_two = build_session(
+        "common-commands-2",
+        "10.0.0.20",
+        ["ls", "whoami", "pwd"],
+        client_version="SSH-2.0-ClientB",
+        hassh="hassh-B",
+    )
+
+    campaign = detector.correlate(session_one, session_two)
+
+    assert campaign is None
+    assert detector.get_all() == {}
+
+
+def test_repeated_correlation_does_not_duplicate_campaign_sessions():
+    detector = CampaignDetector()
+
+    session_one = build_session(
+        "repeat-1", "10.0.0.10", ["ls", "whoami"]
+    )
+    session_two = build_session(
+        "repeat-2", "10.0.0.20", ["whoami", "pwd"]
+    )
+
+    first = detector.correlate(session_one, session_two)
+    second = detector.correlate(session_one, session_two)
+
+    assert first is not None
+    assert second is not None
+    assert len(detector.get_all()) == 1
+    assert second.session_ids == ["repeat-1", "repeat-2"]

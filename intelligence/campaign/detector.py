@@ -58,11 +58,23 @@ class CampaignDetector:
         strong_evidence = {
             "same_hassh",
             "same_fingerprint",
-            "shared_commands",
             "shared_intent",
         }
 
-        if not any(reason in strong_evidence for reason in reasons):
+        shared_commands = self._shared_commands(
+            session_one,
+            session_two,
+        )
+        distinctive_commands = [
+            command
+            for command in shared_commands
+            if self._is_distinctive_command(command)
+        ]
+
+        if (
+            not any(reason in strong_evidence for reason in reasons)
+            and not distinctive_commands
+        ):
             return None
 
         campaigns = self._find_matching_campaigns(
@@ -300,6 +312,49 @@ class CampaignDetector:
                 reason,
                 score,
             )
+
+    def _is_distinctive_command(self, command: str) -> bool:
+        """Reject ubiquitous shell commands as standalone campaign evidence."""
+
+        normalized = " ".join(command.strip().lower().split())
+        if not normalized:
+            return False
+
+        generic_commands = {
+            "ls",
+            "pwd",
+            "whoami",
+            "id",
+            "uname",
+            "uname -a",
+            "hostname",
+            "help",
+            "exit",
+            "quit",
+            "history",
+            "date",
+            "w",
+            "who",
+            "uptime",
+        }
+
+        base_command = normalized.split(maxsplit=1)[0]
+        return normalized not in generic_commands and base_command not in {
+            "ls",
+            "pwd",
+            "whoami",
+            "id",
+            "uname",
+            "hostname",
+            "help",
+            "exit",
+            "quit",
+            "history",
+            "date",
+            "w",
+            "who",
+            "uptime",
+        }
 
     def _shared_commands(
         self,
