@@ -10,10 +10,13 @@ from intelligence.session.model import ReconstructedSession
 class CampaignDetector:
     """Detect and aggregate relationships between attacker sessions."""
 
+    # These are transparent evidence points, not calibrated probabilities.
+    # Fingerprint IDs are derived from protocol, HASSH, and client version,
+    # so a matching fingerprint is recorded as a reason but is not scored
+    # again as independent evidence.
     CONFIDENCE_SCORES = {
         "same_source_ip": 30,
         "same_hassh": 25,
-        "same_fingerprint": 20,
         "shared_intent": 10,
         "shared_commands": 10,
         "same_client_version": 5,
@@ -53,12 +56,14 @@ class CampaignDetector:
             intents_two,
         )
 
-        # Source IP and client version are weak contextual signals.
-        # Require at least one stronger signal before correlating sessions.
-        strong_evidence = {
+        # Require distinctive shared behavior plus independent context.
+        # HASSH, fingerprints, intent, and generic commands alone are
+        # insufficient to establish that sessions belong to one campaign.
+        contextual_evidence = {
+            "same_source_ip",
             "same_hassh",
+            "same_client_version",
             "same_fingerprint",
-            "shared_intent",
         }
 
         shared_commands = self._shared_commands(
@@ -71,10 +76,12 @@ class CampaignDetector:
             if self._is_distinctive_command(command)
         ]
 
-        if (
-            not any(reason in strong_evidence for reason in reasons)
-            and not distinctive_commands
-        ):
+        has_context = any(
+            reason in contextual_evidence
+            for reason in reasons
+        )
+
+        if not distinctive_commands or not has_context:
             return None
 
         campaigns = self._find_matching_campaigns(
@@ -297,7 +304,7 @@ class CampaignDetector:
         campaign: AttackCampaign,
         reasons: List[str],
     ) -> None:
-        """Add transparent confidence contributions for observed evidence."""
+        """Add evidence points; the resulting score is not a probability."""
 
         for reason in reasons:
             score = self.CONFIDENCE_SCORES.get(

