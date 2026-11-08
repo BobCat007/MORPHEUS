@@ -31,6 +31,7 @@ class CampaignDetector:
         # Intelligence associated with each observed session.
         self.fingerprints: Dict[str, AttackerFingerprint] = {}
         self.intents: Dict[str, List[IntentResult]] = {}
+        self.session_honeypot_ids: Dict[str, str] = {}
 
     def correlate(
         self,
@@ -130,6 +131,7 @@ class CampaignDetector:
         session: ReconstructedSession,
         fingerprint: Optional[AttackerFingerprint] = None,
         intents: Optional[List[IntentResult]] = None,
+        honeypot_id: str = "default",
     ) -> Optional[AttackCampaign]:
         """Observe a new session and automatically correlate it.
 
@@ -148,6 +150,9 @@ class CampaignDetector:
         ]
 
         self.sessions[session.session_id] = session
+        self.session_honeypot_ids[session.session_id] = (
+            honeypot_id.strip() if honeypot_id and honeypot_id.strip() else "default"
+        )
 
         if fingerprint is not None:
             self.fingerprints[session.session_id] = fingerprint
@@ -176,6 +181,12 @@ class CampaignDetector:
             )
 
             if campaign is not None:
+                campaign.add_honeypot(
+                    self.session_honeypot_ids.get(previous_session.session_id, "default")
+                )
+                campaign.add_honeypot(
+                    self.session_honeypot_ids.get(session.session_id, "default")
+                )
                 matched_campaign = campaign
 
         return matched_campaign
@@ -214,6 +225,9 @@ class CampaignDetector:
         for campaign in campaigns[1:]:
             for session_id in campaign.session_ids:
                 primary.add_session(session_id)
+
+            for honeypot_id in campaign.honeypot_ids:
+                primary.add_honeypot(honeypot_id)
 
             for fingerprint_id in campaign.fingerprint_ids:
                 primary.add_fingerprint(fingerprint_id)

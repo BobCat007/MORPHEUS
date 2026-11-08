@@ -169,3 +169,47 @@ def test_live_pipeline_processes_appended_cowrie_record(tmp_path):
     assert not thread.is_alive(), "Live pipeline did not stop"
     assert not errors
     assert "cowrie.session.connect" in contents
+
+
+
+def test_live_pipeline_passes_configured_honeypot_id(tmp_path, monkeypatch):
+    from threading import Event
+    from types import SimpleNamespace
+
+    captured = {}
+
+    class FakeIntelligenceHandler:
+        def __init__(self, event_bus, **kwargs):
+            captured.update(kwargs)
+
+        def handle(self, event):
+            pass
+
+    class FakeFollower:
+        def __init__(self, log_path, event_bus, poll_interval, start_at_end):
+            pass
+
+        def run(self, stop_event):
+            pass
+
+    monkeypatch.setattr(
+        live_pipeline,
+        "settings",
+        SimpleNamespace(
+            honeypot_id="sensor-stage3-test",
+            webhook_url="",
+            webhook_timeout=5.0,
+        ),
+    )
+    monkeypatch.setattr(
+        live_pipeline, "IntelligenceHandler", FakeIntelligenceHandler
+    )
+    monkeypatch.setattr(live_pipeline, "CowrieLogFollower", FakeFollower)
+
+    live_pipeline.run_live_cowrie_pipeline(
+        log_path=str(tmp_path / "cowrie.json"),
+        storage_path=str(tmp_path / "events.jsonl"),
+        stop_event=Event(),
+    )
+
+    assert captured["honeypot_id"] == "sensor-stage3-test"

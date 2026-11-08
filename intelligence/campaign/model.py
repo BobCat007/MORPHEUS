@@ -9,6 +9,7 @@ class AttackCampaign:
     campaign_id: str
 
     session_ids: List[str] = field(default_factory=list)
+    honeypot_ids: List[str] = field(default_factory=list)
     fingerprint_ids: List[str] = field(default_factory=list)
 
     source_ips: List[str] = field(default_factory=list)
@@ -32,6 +33,11 @@ class AttackCampaign:
 
         if session_id not in self.session_ids:
             self.session_ids.append(session_id)
+
+    def add_honeypot(self, honeypot_id: str) -> None:
+        """Record a honeypot that contributed to this campaign."""
+        if honeypot_id and honeypot_id not in self.honeypot_ids:
+            self.honeypot_ids.append(honeypot_id)
 
     def add_fingerprint(self, fingerprint_id: str) -> None:
         """Add a fingerprint associated with the campaign."""

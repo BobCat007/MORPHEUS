@@ -1,4 +1,3 @@
-
 """FastAPI application for the MORPHEUS security dashboard."""
 
 import asyncio
@@ -6,20 +5,28 @@ import hmac
 import json
 import os
 from collections import Counter
+from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from core.events.validator import validate_event
 from core.storage.event_store import EventStore
-from pathlib import Path
+from intelligence.campaign.aggregator import CrossHoneypotAggregator
 from incidents.service import (
     VALID_STATUSES,
     get_incident,
     list_incidents,
     update_incident_status,
 )
-
+from core.security.sensor_registry import (
+    SensorAlreadyExists,
+    SensorNotFound,
+    SensorRegistry,
+)
 
 ALERT_EVENT_TYPE = "morpheus.alert.created"
 ANALYSIS_EVENT_TYPE = "morpheus.intelligence.analysis"
@@ -34,9 +41,16 @@ class IncidentStatusUpdate(BaseModel):
     note: Optional[str] = Field(None, max_length=2000)
 
 
+class SensorEventBatch(BaseModel):
+    """Validated batch submitted by an authenticated remote sensor."""
+
+    events: List[Dict[str, Any]] = Field(..., min_length=1, max_length=100)
+
+class SensorRegistration(BaseModel):
+    sensor_id: str = Field(..., min_length=1, max_length=128)
+
 def _read_events(storage_path: str) -> List[Dict[str, Any]]:
     """Read the configured event store without exposing internal errors."""
-
     try:
         return EventStore(storage_path).read_all()
     except (OSError, ValueError):
@@ -45,10 +59,18 @@ def _read_events(storage_path: str) -> List[Dict[str, Any]]:
             detail="Unable to read the MORPHEUS event store.",
         )
 
+def _read_platform_events(
+    cowrie_storage_path: str,
+    sensor_storage_path: str,
+) -> List[Dict[str, Any]]:
+    """Read Cowrie and remote sensor events without sharing their writers."""
+    return (
+        _read_events(cowrie_storage_path)
+        + _read_events(sensor_storage_path)
+    )
 
 def _newest_first(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Sort events newest first using their stored timestamps."""
-
     return sorted(
         events,
         key=lambda event: str(event.get("timestamp") or ""),
@@ -56,84 +78,95 @@ def _newest_first(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     )
 
 
-def _alert_events(storage_path: str) -> List[Dict[str, Any]]:
+def _alert_events(
+    storage_path: str,
+    sensor_storage_path: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """Return stored alert events, newest first."""
-
     events = [
         event
-        for event in _read_events(storage_path)
+        for event in (
+            _read_platform_events(storage_path, sensor_storage_path)
+            if sensor_storage_path
+            else _read_events(storage_path)
+        )
         if event.get("event_type") == ALERT_EVENT_TYPE
         and isinstance(event.get("data"), dict)
     ]
     return _newest_first(events)
 
-
-
-def _analysis_events(storage_path: str) -> List[Dict[str, Any]]:
-    """Return valid intelligence-analysis events, newest first.
-
-    Risk score breaks ties when events have the same timestamp.
-    """
+def _analysis_events(
+    storage_path: str,
+    sensor_storage_path: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Return valid intelligence-analysis events, newest first."""
+    source_events = (
+        _read_platform_events(storage_path, sensor_storage_path)
+        if sensor_storage_path
+        else _read_events(storage_path)
+    )
 
     events = []
-
-    for event in _read_events(storage_path):
+    for event in source_events:
         if event.get("event_type") != ANALYSIS_EVENT_TYPE:
             continue
-
         data = event.get("data")
         if not isinstance(data, dict):
             continue
-
-        session = data.get("session")
-        risk = data.get("risk_assessment")
-
-        if not isinstance(session, dict) or not isinstance(risk, dict):
+        if not isinstance(data.get("session"), dict):
             continue
-
+        if not isinstance(data.get("risk_assessment"), dict):
+            continue
         events.append(event)
 
     def sort_key(event: Dict[str, Any]) -> Any:
-        data = event.get("data", {})
-        risk = data.get("risk_assessment", {})
-        score = risk.get("score", 0)
-
+        risk = event.get("data", {}).get("risk_assessment", {})
         try:
-            score = float(score)
+            score = float(risk.get("score", 0))
         except (TypeError, ValueError):
             score = 0
-
-        return (
-            str(event.get("timestamp") or ""),
-            score,
-        )
+        return str(event.get("timestamp") or ""), score
 
     return sorted(events, key=sort_key, reverse=True)
 
-
 def _analysis_severity(event: Dict[str, Any]) -> str:
     """Get the normalized severity from an analysis event."""
-
-    data = event.get("data", {})
-    risk = data.get("risk_assessment", {})
+    risk = event.get("data", {}).get("risk_assessment", {})
     severity = risk.get("severity", "unknown")
-
-    if not isinstance(severity, str):
-        return "unknown"
-
-    return severity.strip().lower()
+    return severity.strip().lower() if isinstance(severity, str) else "unknown"
 
 
 def create_app(
     storage_path: Optional[str] = None,
     write_token: Optional[str] = None,
+    http_storage_path: Optional[str] = None,
+    sensor_tokens: Optional[Dict[str, str]] = None,
+    sensor_storage_path: Optional[str] = None,
 ) -> FastAPI:
-    """Create an application using a specified or configured event store."""
-
+    """Create an application using specified or configured event stores."""
     resolved_path = storage_path or os.getenv(
-        "MORPHEUS_STORAGE_PATH",
-        "data/events.jsonl",
+        "MORPHEUS_STORAGE_PATH", "data/events.jsonl"
     )
+    resolved_http_path = http_storage_path or os.getenv(
+        "MORPHEUS_HTTP_EVENT_STORE", "data/http-events.jsonl"
+    )
+
+    cowrie_path = Path(resolved_path).expanduser().resolve()
+    http_path = Path(resolved_http_path).expanduser().resolve()
+    resolved_sensor_path = sensor_storage_path or os.getenv(
+        "MORPHEUS_SENSOR_EVENT_STORE", "data/sensor-events.jsonl"
+    )
+
+    sensor_path = Path(resolved_sensor_path).expanduser().resolve()
+
+    if len({cowrie_path, http_path, sensor_path}) != 3:
+        raise ValueError(
+           "Cowrie, HTTP, and remote sensor events must use separate event stores."
+        )
+    if cowrie_path == http_path:
+        raise ValueError(
+            "HTTP deception events must use a separate event store from Cowrie."
+        )
 
     application = FastAPI(
         title="MORPHEUS API",
@@ -142,7 +175,61 @@ def create_app(
         ),
         version="1.1.0",
     )
-    application.state.storage_path = resolved_path
+
+    if sensor_tokens is None:
+        raw_tokens = os.getenv("MORPHEUS_SENSOR_TOKENS", "")
+        if raw_tokens:
+            try:
+                sensor_tokens = json.loads(raw_tokens)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "MORPHEUS_SENSOR_TOKENS must contain valid JSON."
+                ) from exc
+        else:
+            sensor_tokens = {}
+
+    if not isinstance(sensor_tokens, dict) or any(
+        not isinstance(sensor_id, str)
+        or not sensor_id.strip()
+        or len(sensor_id) > 128
+        or not isinstance(token, str)
+        or not token
+        for sensor_id, token in sensor_tokens.items()
+    ):
+        raise ValueError("Invalid MORPHEUS sensor credentials configuration.")
+
+    registry_path = os.getenv("MORPHEUS_SENSOR_REGISTRY") or str(
+        sensor_path.with_name("sensor-registry.json")
+    )
+
+    application.state.sensor_registry = SensorRegistry(
+        registry_path,
+        initial_tokens=sensor_tokens,
+    )
+
+    try:
+        heartbeat_timeout = int(
+            os.getenv("MORPHEUS_SENSOR_HEARTBEAT_TIMEOUT_SECONDS", "90")
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "MORPHEUS_SENSOR_HEARTBEAT_TIMEOUT_SECONDS must be an integer."
+        ) from exc
+
+    if heartbeat_timeout < 1:
+        raise ValueError("Sensor heartbeat timeout must be positive.")
+
+    application.state.sensor_heartbeat_timeout_seconds = heartbeat_timeout
+
+    application.state.sensor_admin_token = os.getenv(
+        "MORPHEUS_SENSOR_ADMIN_TOKEN",
+        "",
+    )
+
+    application.state.storage_path = str(cowrie_path)
+    application.state.http_storage_path = str(http_path)
+    application.state.sensor_storage_path = str(sensor_path)
+    application.state.sensor_tokens = dict(sensor_tokens)
 
     @application.websocket("/api/v1/stream")
     async def event_stream(websocket: WebSocket) -> None:
@@ -207,17 +294,295 @@ def create_app(
     @application.get("/api/v1/health")
     def health() -> Dict[str, str]:
         """Return application health without exposing filesystem details."""
-
         return {"status": "ok", "service": "morpheus-api"}
+
+    def require_sensor_admin(supplied_token):
+        expected = application.state.sensor_admin_token
+
+        if not expected:
+            raise HTTPException(
+                status_code=503,
+                detail="Sensor administration is not configured.",
+            )
+
+        if not supplied_token or not hmac.compare_digest(
+            supplied_token, expected
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid sensor administrator credentials.",
+            )
+
+    @application.post("/api/v1/sensors", status_code=201)
+    def register_sensor(
+        request: SensorRegistration,
+        admin_token: Optional[str] = Header(
+            None,
+            alias="X-Morpheus-Sensor-Admin-Token",
+        ),
+    ):
+        require_sensor_admin(admin_token)
+
+        try:
+            token = application.state.sensor_registry.register(
+                request.sensor_id
+            )
+        except SensorAlreadyExists:
+            raise HTTPException(
+                status_code=409,
+                detail="Sensor is already registered.",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+        return {
+            "status": "registered",
+            "sensor_id": request.sensor_id,
+            "token": token,
+            "message": "Store this token securely. It will not be shown again.",
+        }
+
+    @application.get("/api/v1/sensors")
+    def list_sensors(
+        admin_token: Optional[str] = Header(
+            None,
+            alias="X-Morpheus-Sensor-Admin-Token",
+        ),
+    ):
+        require_sensor_admin(admin_token)
+
+        return {
+            "sensors": application.state.sensor_registry.list_sensors()
+        }
+
+    @application.post("/api/v1/sensors/heartbeat")
+    def sensor_heartbeat(
+        sensor_id: Optional[str] = Header(None, alias="X-Morpheus-Sensor-ID"),
+        supplied_token: Optional[str] = Header(
+            None, alias="X-Morpheus-Sensor-Token"
+        ),
+    ) -> Dict[str, Any]:
+        """Record an authenticated remote sensor heartbeat."""
+        if not application.state.sensor_registry.verify(
+            sensor_id, supplied_token
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="Missing or invalid sensor credentials.",
+            )
+
+        try:
+            timestamp = application.state.sensor_registry.heartbeat(sensor_id)
+        except SensorNotFound:
+            raise HTTPException(
+                status_code=404,
+                detail="Active sensor not found.",
+            )
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="Unable to persist sensor heartbeat.",
+            ) from exc
+
+        return {
+            "status": "recorded",
+            "sensor_id": sensor_id,
+            "last_seen": timestamp,
+        }
+
+    @application.get("/api/v1/sensors/health")
+    def sensor_health() -> Dict[str, Any]:
+        """Return sanitized online/offline status for registered sensors."""
+        now = datetime.now(timezone.utc)
+        timeout = application.state.sensor_heartbeat_timeout_seconds
+        sensors = []
+
+        for sensor in application.state.sensor_registry.list_sensor_health():
+            last_seen = sensor.get("last_seen")
+            online = False
+
+            if sensor["status"] == "active" and last_seen:
+                try:
+                    timestamp = datetime.fromisoformat(
+                        last_seen.replace("Z", "+00:00")
+                    )
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.replace(tzinfo=timezone.utc)
+
+                    age = (now - timestamp).total_seconds()
+                    online = 0 <= age <= timeout
+                except (TypeError, ValueError):
+                    online = False
+
+            if sensor["status"] == "revoked":
+                health_status = "revoked"
+            else:
+                health_status = "online" if online else "offline"
+
+            sensors.append({
+                "sensor_id": sensor["sensor_id"],
+                "status": health_status,
+                "online": online,
+                "last_seen": last_seen,
+            })
+
+        return {
+            "sensors": sensors,
+            "online": sum(1 for item in sensors if item["status"] == "online"),
+            "offline": sum(1 for item in sensors if item["status"] == "offline"),
+            "revoked": sum(1 for item in sensors if item["status"] == "revoked"),
+            "timeout_seconds": timeout,
+        }
+
+    @application.post("/api/v1/sensors/{sensor_id}/rotate")
+    def rotate_sensor_token(
+        sensor_id: str,
+        admin_token: Optional[str] = Header(
+            None,
+            alias="X-Morpheus-Sensor-Admin-Token",
+        ),
+    ):
+        require_sensor_admin(admin_token)
+
+        try:
+            token = application.state.sensor_registry.rotate(sensor_id)
+        except SensorNotFound:
+            raise HTTPException(
+                status_code=404,
+                detail="Active sensor not found.",
+            )
+
+        return {
+            "status": "rotated",
+            "sensor_id": sensor_id,
+            "token": token,
+            "message": "Store this token securely. It will not be shown again.",
+        }
+
+    @application.delete("/api/v1/sensors/{sensor_id}")
+    def revoke_sensor(
+        sensor_id: str,
+        admin_token: Optional[str] = Header(
+            None,
+            alias="X-Morpheus-Sensor-Admin-Token",
+        ),
+    ):
+        require_sensor_admin(admin_token)
+
+        try:
+            application.state.sensor_registry.revoke(sensor_id)
+        except SensorNotFound:
+            raise HTTPException(
+                status_code=404,
+                detail="Sensor not found.",
+            )
+
+        return {
+            "status": "revoked",
+            "sensor_id": sensor_id,
+        }
+
+    @application.post("/api/v1/sensors/events")
+    def ingest_sensor_events(
+        batch: SensorEventBatch,
+        sensor_id: Optional[str] = Header(None, alias="X-Morpheus-Sensor-ID"),
+        supplied_token: Optional[str] = Header(
+            None, alias="X-Morpheus-Sensor-Token"
+        ),
+    ) -> Dict[str, Any]:
+        """Authenticate a remote sensor and ingest its event batch."""
+        if not application.state.sensor_registry.list_sensors():
+            raise HTTPException(
+                status_code=503,
+                detail="Sensor ingestion is disabled: no sensors registered.",
+            )
+
+        if not application.state.sensor_registry.verify(
+            sensor_id,
+            supplied_token,
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="Missing or invalid sensor credentials.",
+            )
+
+        validated_events: List[Dict[str, Any]] = []
+
+        # Validate the entire batch before writing anything.
+        for incoming in batch.events:
+            event = dict(incoming)
+            try:
+                validate_event(event)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Invalid event: {}".format(exc),
+                ) from exc
+
+            data = dict(event["data"])
+            claimed_sensor = data.get("honeypot_id")
+
+            if claimed_sensor and claimed_sensor != sensor_id:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Event honeypot_id does not match "
+                        "authenticated sensor."
+                    ),
+                )
+
+            data["honeypot_id"] = sensor_id
+            event["data"] = data
+            validated_events.append(event)
+
+        try:
+            store = EventStore(application.state.sensor_storage_path)
+            accepted_ids, duplicate_ids = store.save_many_unique(
+                validated_events
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="Unable to persist sensor events.",
+            ) from exc
+
+        accepted_set = set(accepted_ids)
+        seen_ids = set()
+
+        acknowledgements = []
+
+        for event in validated_events:
+            event_id = str(event["event_id"])
+
+            if event_id in accepted_set and event_id not in seen_ids:
+                status = "accepted"
+            else:
+                status = "duplicate"
+
+            seen_ids.add(event_id)
+
+            acknowledgements.append({
+                "event_id": event["event_id"],
+                "status": status,
+            })
+
+        return {
+            "status": "accepted",
+            "sensor_id": sensor_id,
+            "accepted": len(accepted_ids),
+            "event_ids": accepted_ids,
+            "duplicate": len(duplicate_ids),
+            "duplicate_event_ids": duplicate_ids,
+            "acknowledgements": acknowledgements,
+        }
 
     @application.get("/api/v1/dashboard")
     def dashboard() -> Dict[str, Any]:
         """Summarize alerts, analyzed sessions, and incident statuses."""
-
         storage = application.state.storage_path
-        alerts = _alert_events(storage)
-        sessions = _analysis_events(storage)
-
+        sensor_storage = application.state.sensor_storage_path
+        alerts = _alert_events(storage, sensor_storage)
+        sessions = _analysis_events(storage, sensor_storage)
         severity_counts = Counter(
             str(event["data"].get("severity", "unknown")).lower()
             for event in alerts
@@ -225,13 +590,10 @@ def create_app(
         session_severity_counts = Counter(
             _analysis_severity(event) for event in sessions
         )
-
         incident_records = list_incidents(storage)
         incident_status_counts = Counter(
-            incident.get("status", "unknown")
-            for incident in incident_records
+            incident.get("status", "unknown") for incident in incident_records
         )
-
         return {
             "total_alerts": len(alerts),
             "alerts_by_severity": {
@@ -258,7 +620,6 @@ def create_app(
         limit: int = Query(100, ge=1, le=500),
     ) -> Dict[str, Any]:
         """List stored alerts, optionally filtered by severity."""
-
         if severity is not None:
             severity = severity.strip().lower()
             if severity not in SEVERITIES:
@@ -266,16 +627,99 @@ def create_app(
                     status_code=400,
                     detail="Severity must be low, medium, high, or critical.",
                 )
-
-        results = _alert_events(application.state.storage_path)
-
+        results = _alert_events(
+            application.state.storage_path,
+            application.state.sensor_storage_path,
+        )
         if severity is not None:
             results = [
-                event
-                for event in results
+                event for event in results
                 if str(event["data"].get("severity", "")).lower() == severity
             ]
+        return {
+            "count": len(results[:limit]),
+            "total_matching": len(results),
+            "items": results[:limit],
+        }
 
+    @application.get("/api/v1/campaigns")
+    def campaigns(
+        honeypot_id: Optional[str] = Query(None),
+        limit: int = Query(100, ge=1, le=500),
+    ) -> Dict[str, Any]:
+        """Reconstruct and list correlated campaigns across honeypots."""
+        events = _analysis_events(
+            application.state.storage_path,
+            application.state.sensor_storage_path,
+        )
+        reconstructed = CrossHoneypotAggregator().rebuild(events)
+        results = [asdict(campaign) for campaign in reconstructed]
+        if honeypot_id is not None:
+            requested_sensor = honeypot_id.strip()
+            results = [
+                campaign for campaign in results
+                if requested_sensor in campaign.get("honeypot_ids", [])
+            ]
+        results.sort(
+            key=lambda campaign: str(campaign.get("last_seen") or ""),
+            reverse=True,
+        )
+        return {
+            "count": len(results[:limit]),
+            "total_matching": len(results),
+            "items": results[:limit],
+        }
+
+    @application.get("/api/v1/http-events")
+    def http_events(
+        source_ip: Optional[str] = Query(None),
+        honeypot_id: Optional[str] = Query(None),
+        method: Optional[str] = Query(None),
+        status_code: Optional[int] = Query(None, ge=100, le=599),
+        limit: int = Query(100, ge=1, le=500),
+    ) -> Dict[str, Any]:
+        """List HTTP deception requests from the dedicated HTTP event store."""
+        http_path = Path(application.state.http_storage_path)
+        if not http_path.exists():
+            results: List[Dict[str, Any]] = []
+        else:
+            results = [
+                event for event in _read_events(str(http_path))
+                if event.get("event_type") == "morpheus.http.request"
+                and isinstance(event.get("data"), dict)
+            ]
+        if source_ip is not None:
+            requested_ip = source_ip.strip()
+            results = [
+                event for event in results
+                if str(
+                    event["data"].get("client_ip")
+                    or event["data"].get("source_ip")
+                    or ""
+                ) == requested_ip
+            ]
+        if honeypot_id is not None:
+            requested_sensor = honeypot_id.strip()
+            results = [
+                event for event in results
+                if str(event["data"].get("honeypot_id") or "")
+                == requested_sensor
+            ]
+        if method is not None:
+            requested_method = method.strip().upper()
+            results = [
+                event for event in results
+                if str(event["data"].get("method") or "").upper()
+                == requested_method
+            ]
+        if status_code is not None:
+            results = [
+                event for event in results
+                if event["data"].get(
+                    "response_status", event["data"].get("status_code")
+                ) == status_code
+            ]
+        results = _newest_first(results)
         return {
             "count": len(results[:limit]),
             "total_matching": len(results),
@@ -288,7 +732,6 @@ def create_app(
         limit: int = Query(100, ge=1, le=500),
     ) -> Dict[str, Any]:
         """List analyzed sessions, optionally filtered by risk severity."""
-
         if severity is not None:
             severity = severity.strip().lower()
             if severity not in SEVERITIES:
@@ -296,16 +739,15 @@ def create_app(
                     status_code=400,
                     detail="Severity must be low, medium, high, or critical.",
                 )
-
-        results = _analysis_events(application.state.storage_path)
-
+        results = _analysis_events(
+            application.state.storage_path,
+            application.state.sensor_storage_path,
+        )
         if severity is not None:
             results = [
-                event
-                for event in results
+                event for event in results
                 if _analysis_severity(event) == severity
             ]
-
         return {
             "count": len(results[:limit]),
             "total_matching": len(results),
@@ -315,16 +757,14 @@ def create_app(
     @application.get("/api/v1/sessions/{session_id}")
     def session_detail(session_id: str) -> Dict[str, Any]:
         """Return an analyzed session by its session identifier."""
-
-        results = _analysis_events(application.state.storage_path)
-
+        results = _analysis_events(
+            application.state.storage_path,
+            application.state.sensor_storage_path,
+        )
         for event in results:
-            data = event.get("data", {})
-            session = data.get("session", {})
-
+            session = event.get("data", {}).get("session", {})
             if session.get("session_id") == session_id:
                 return event
-
         raise HTTPException(status_code=404, detail="Analyzed session not found.")
 
     @application.get("/api/v1/incidents")
@@ -333,15 +773,12 @@ def create_app(
         limit: int = Query(100, ge=1, le=500),
     ) -> Dict[str, Any]:
         """List incidents, optionally filtered by lifecycle status."""
-
         if status is not None:
             status = status.strip().lower()
             if status not in VALID_STATUSES:
                 raise HTTPException(
-                    status_code=400,
-                    detail="Invalid incident status.",
+                    status_code=400, detail="Invalid incident status."
                 )
-
         try:
             results = list_incidents(application.state.storage_path)
         except (OSError, ValueError):
@@ -349,14 +786,11 @@ def create_app(
                 status_code=500,
                 detail="Unable to read the MORPHEUS event store.",
             )
-
         if status is not None:
             results = [
-                incident
-                for incident in results
+                incident for incident in results
                 if incident.get("status") == status
             ]
-
         return {
             "count": len(results[:limit]),
             "total_matching": len(results),
@@ -366,12 +800,8 @@ def create_app(
     @application.get("/api/v1/incidents/{incident_id}")
     def incident_detail(incident_id: str) -> Dict[str, Any]:
         """Return one incident and its status history."""
-
         try:
-            return get_incident(
-                application.state.storage_path,
-                incident_id,
-            )
+            return get_incident(application.state.storage_path, incident_id)
         except LookupError:
             raise HTTPException(status_code=404, detail="Incident not found.")
         except (OSError, ValueError):
@@ -389,20 +819,19 @@ def create_app(
         ),
     ) -> Dict[str, Any]:
         """Append an incident status change after authenticating the caller."""
-
         expected_token = (
             write_token
             if write_token is not None
             else os.getenv("MORPHEUS_API_WRITE_TOKEN", "")
         )
-
         if not expected_token:
             raise HTTPException(
                 status_code=503,
-                detail="Incident updates are disabled: write token is not configured.",
+                detail=(
+                    "Incident updates are disabled: "
+                    "write token is not configured."
+                ),
             )
-
-
         if not supplied_token or not hmac.compare_digest(
             supplied_token, expected_token
         ):
@@ -411,7 +840,6 @@ def create_app(
                 detail="Missing or invalid incident write token.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-
         try:
             return update_incident_status(
                 storage_path=application.state.storage_path,

@@ -1,8 +1,11 @@
+import logging
 from ipaddress import ip_address
 from typing import List, Optional
 
 from threat_intel.ip.model import IPIntelligence
 from threat_intel.ip.provider import IPIntelligenceProvider
+
+logger = logging.getLogger(__name__)
 
 
 class IPIntelligenceResolver:
@@ -15,12 +18,19 @@ class IPIntelligenceResolver:
         self.providers = providers or []
 
     def resolve(self, ip: str) -> IPIntelligence:
-        """Resolve an IP address using the configured providers."""
+        """Resolve an IP address, falling back safely on provider errors."""
 
         self._validate_ip(ip)
 
         for provider in self.providers:
-            intelligence = provider.lookup(ip)
+            try:
+                intelligence = provider.lookup(ip)
+            except Exception:
+                logger.exception(
+                    "IP intelligence provider failed for %s",
+                    ip,
+                )
+                continue
 
             if intelligence is not None:
                 return intelligence
@@ -31,11 +41,7 @@ class IPIntelligenceResolver:
         )
 
     def _validate_ip(self, ip: str) -> None:
-        """Validate that the supplied value is a valid IP address."""
-
         try:
             ip_address(ip)
         except ValueError as exc:
-            raise ValueError(
-                f"Invalid IP address: {ip}"
-            ) from exc
+            raise ValueError(f"Invalid IP address: {ip}") from exc

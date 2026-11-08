@@ -4,6 +4,8 @@ import csv
 import io
 import json
 import posixpath
+import zipfile
+from datetime import datetime
 from typing import Dict, List
 
 from openpyxl import Workbook
@@ -190,14 +192,19 @@ def _validate_path(path: str) -> str:
 
 
 def _finance_workbook() -> bytes:
-    """Build a real XLSX workbook using fictional finance records."""
+    """Build a deterministic XLSX workbook using fictional finance records."""
     workbook = Workbook()
     summary = workbook.active
     summary.title = "Quarterly Summary"
 
     summary.append([COMPANY])
     summary.append(["Synthetic finance data - not actual financial results"])
-    summary.append(["Period", "Department", "Budget (fictional USD)", "Actual (fictional USD)"])
+    summary.append([
+        "Period",
+        "Department",
+        "Budget (fictional USD)",
+        "Actual (fictional USD)",
+    ])
 
     rows = [
         ("2026-Q3", "Engineering", 180000, 171500),
@@ -232,14 +239,46 @@ def _finance_workbook() -> bytes:
     workbook.properties.title = "Northstar Synthetic Quarterly Finance"
     workbook.properties.subject = "Fictional enterprise honeypot dataset"
     workbook.properties.creator = "MORPHEUS"
+    workbook.properties.lastModifiedBy = "MORPHEUS"
     workbook.properties.description = (
         "Synthetic records only. No actual financial information."
     )
 
+    # Fix workbook metadata timestamps.
+    fixed_time = datetime(2000, 1, 1)
+    workbook.properties.created = fixed_time
+    workbook.properties.modified = fixed_time
+
     output = io.BytesIO()
     workbook.save(output)
     workbook.close()
-    return output.getvalue()
+
+    # Normalize ZIP metadata so identical workbooks produce identical bytes.
+    normalized = io.BytesIO()
+
+    with zipfile.ZipFile(io.BytesIO(output.getvalue()), "r") as source:
+        with zipfile.ZipFile(
+            normalized,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+            compresslevel=9,
+        ) as target:
+            for name in sorted(source.namelist()):
+                info = zipfile.ZipInfo(
+                    name,
+                    date_time=(1980, 1, 1, 0, 0, 0),
+                )
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = source.getinfo(name).external_attr
+
+                target.writestr(
+                    info,
+                    source.read(name),
+                    compress_type=zipfile.ZIP_DEFLATED,
+                    compresslevel=9,
+                )
+
+    return normalized.getvalue()
 
 
 def _content_for(path: str) -> bytes:
@@ -313,7 +352,6 @@ def _content_for(path: str) -> bytes:
         raise ValueError("Generated asset exceeds the content size limit.")
 
     return encoded
-
 
 def generate_assets(paths: List[str]) -> Dict[str, bytes]:
     """Generate bounded synthetic contents without accessing host files."""

@@ -30,6 +30,7 @@ class Settings:
     debug: bool = os.getenv("MORPHEUS_DEBUG", "false").lower() == "true"
     webhook_url: str = os.getenv("MORPHEUS_WEBHOOK_URL", "").strip()
     webhook_timeout: float = _read_webhook_timeout()
+    honeypot_id: str = os.getenv("MORPHEUS_HONEYPOT_ID", "default").strip() or "default"
 
 
 settings = Settings()

@@ -3,7 +3,7 @@ import {
   Activity, AlertTriangle, ArrowUpRight,
   Bell, CheckCircle2, Clock3, Crosshair,
   ExternalLink, FileSearch, Filter, LayoutDashboard, LoaderCircle,
-  Menu, Radio, RefreshCw, Search, Shield, ShieldAlert,
+  Globe, Menu, Radio, RefreshCw, Search, Shield, ShieldAlert,
   ShieldCheck, Siren, Target, X, Terminal, Eye, UserRound
 } from 'lucide-react'
 import './App.css'
@@ -362,6 +362,14 @@ export default function App() {
   const [alerts, setAlerts] = useState([])
   const [incidents, setIncidents] = useState([])
   const [sessions, setSessions] = useState([])
+  const [campaigns, setCampaigns] = useState([])
+  const [httpEvents, setHttpEvents] = useState([])
+  const [sensorHealth, setSensorHealth] = useState({
+    sensors: [],
+    online: 0,
+    offline: 0,
+    revoked: 0,
+  })
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
@@ -385,6 +393,7 @@ export default function App() {
         `${API}/alerts?limit=100`,
         `${API}/incidents?limit=100`,
         `${API}/sessions?limit=100`,
+        `${API}/campaigns?limit=100`,
       ]
       const responses = await Promise.all(endpoints.map((url) => fetch(url)))
       const failed = responses.find((response) => !response.ok)
@@ -393,7 +402,7 @@ export default function App() {
         throw new Error(`API returned HTTP ${failed.status}. Is the MORPHEUS API running?`)
       }
 
-      const [dashboardData, alertsData, incidentsData, sessionsData] = await Promise.all(
+      const [dashboardData, alertsData, incidentsData, sessionsData, campaignsData] = await Promise.all(
         responses.map((response) => response.json())
       )
 
@@ -401,6 +410,35 @@ export default function App() {
       setAlerts(Array.isArray(alertsData.items) ? alertsData.items : [])
       setIncidents(Array.isArray(incidentsData.items) ? incidentsData.items : [])
       setSessions(Array.isArray(sessionsData.items) ? sessionsData.items : [])
+      setCampaigns(Array.isArray(campaignsData.items) ? campaignsData.items : [])
+
+      // Optional HTTP telemetry must not break the core dashboard.
+      try {
+        const httpResponse = await fetch(`${API}/http-events?limit=500`)
+        if (httpResponse.ok) {
+          const httpData = await httpResponse.json()
+          setHttpEvents(Array.isArray(httpData.items) ? httpData.items : [])
+        } else {
+          setHttpEvents([])
+        }
+      } catch {
+        setHttpEvents([])
+      }
+            // Optional sensor health must not break the core dashboard.
+      try {
+        const healthResponse = await fetch(`${API}/sensors/health`)
+        if (healthResponse.ok) {
+          const healthData = await healthResponse.json()
+          setSensorHealth({
+            sensors: Array.isArray(healthData.sensors) ? healthData.sensors : [],
+            online: Number(healthData.online) || 0,
+            offline: Number(healthData.offline) || 0,
+            revoked: Number(healthData.revoked) || 0,
+          })
+        }
+      } catch {
+        // Keep the main dashboard available if sensor health is unavailable.
+      }
     } catch (err) {
       setError(err.message || 'Unable to connect to the MORPHEUS API.')
     } finally {
@@ -591,12 +629,13 @@ export default function App() {
     { id: 'sessions', label: 'Analyzed sessions', icon: Eye, count: totalSessions },
     { id: 'alerts', label: 'Security alerts', icon: Siren, count: totalAlerts },
     { id: 'incidents', label: 'Incidents', icon: ShieldAlert, count: activeIncidents },
+    { id: 'http', label: 'HTTP deception', icon: Globe, count: httpEvents.length },
   ]
 
   const comingSoon = {
     intel: {
       icon: Crosshair,
-      title: 'Threat intelligence',
+      title: 'Campaign intelligence',
       description: 'A unified view for attacker fingerprints, campaign correlations, and MITRE ATT&CK mappings.',
       tag: 'NEXT MODULE',
     },
@@ -640,7 +679,7 @@ export default function App() {
         <div className="workspace-label nav-section-label">INTELLIGENCE</div>
         <nav className="primary-nav" aria-label="Intelligence navigation">
           <button className={`nav-item ${page === 'intel' ? 'active' : ''}`} onClick={() => navigate('intel')}>
-            <Target size={18} /><span>Threat intelligence</span>
+            <Target size={18} /><span>Campaign intelligence</span>
           </button>
           <button className={`nav-item ${page === 'activity' ? 'active' : ''}`} onClick={() => navigate('activity')}>
             <Radio size={18} /><span>Event stream</span>
@@ -648,14 +687,35 @@ export default function App() {
         </nav>
 
         <div className="sidebar-spacer" />
-        <div className="sensor-card">
-          <div className="sensor-heading"><span className="pulse-dot" /> PLATFORM STATUS</div>
-          <div className="sensor-status">API connection</div>
-          <div className="sensor-description">
-            {error ? 'Connection needs attention' : loading ? 'Checking service…' : 'Dashboard data loaded'}
+                <div className="sensor-card">
+          <div className="sensor-heading">
+            <span className="pulse-dot" /> SENSOR HEALTH
           </div>
-          <button className="sensor-refresh" onClick={() => loadData(true)} disabled={refreshing}>
-            <RefreshCw size={13} /> Refresh connection
+
+          <div className="sensor-status">
+            {sensorHealth.online} online · {sensorHealth.offline} offline
+          </div>
+
+          <div className="sensor-description">
+            {sensorHealth.sensors.length === 0
+              ? 'No registered sensors'
+              : `${sensorHealth.sensors.length} registered · ${sensorHealth.revoked} revoked`}
+          </div>
+
+          {sensorHealth.sensors.map((sensor) => (
+            <div className="sensor-description" key={sensor.sensor_id}>
+              <span>{sensor.sensor_id}</span>
+              {' — '}
+              <span>{sensor.status}</span>
+            </div>
+          ))}
+
+          <button
+            className="sensor-refresh"
+            onClick={() => loadData(true)}
+            disabled={refreshing}
+          >
+            <RefreshCw size={13} /> Refresh health
           </button>
         </div>
         <div className="sidebar-footer">
@@ -836,7 +896,214 @@ export default function App() {
             </>
           )}
 
-          {(page === 'intel' || page === 'activity') && (
+          {page === 'intel' && (
+            <>
+              <SectionTitle
+                eyebrow="CROSS-HONEYPOT INTELLIGENCE"
+                title="Campaign intelligence"
+                description="Investigate correlated attacker activity reconstructed from persisted analysis events across MORPHEUS sensors."
+                action={
+                  <button className="button-secondary" onClick={() => loadData(true)} disabled={refreshing}>
+                    <RefreshCw size={15} className={refreshing ? 'spin' : ''} /> Refresh
+                  </button>
+                }
+              />
+
+              <div className="metrics-grid">
+                <MetricCard
+                  title="Correlated campaigns"
+                  value={loading ? '—' : campaigns.length}
+                  subtitle="Reconstructed attack groups"
+                  icon={Target}
+                  tone="tone-blue"
+                />
+                <MetricCard
+                  title="Participating sensors"
+                  value={loading ? '—' : new Set(campaigns.flatMap((campaign) => Array.isArray(campaign.honeypot_ids) ? campaign.honeypot_ids : [])).size}
+                  subtitle="Unique honeypot identities"
+                  icon={Radio}
+                  tone="tone-purple"
+                />
+                <MetricCard
+                  title="Correlated sessions"
+                  value={loading ? '—' : campaigns.reduce((total, campaign) => total + (Array.isArray(campaign.session_ids) ? campaign.session_ids.length : 0), 0)}
+                  subtitle="Sessions across campaigns"
+                  icon={Eye}
+                  tone="tone-amber"
+                />
+                <MetricCard
+                  title="Average confidence"
+                  value={loading ? '—' : campaigns.length ? `${Math.round(campaigns.reduce((total, campaign) => total + (Number(campaign.confidence_score) || 0), 0) / campaigns.length)}%` : '—'}
+                  subtitle="Campaign correlation confidence"
+                  icon={Crosshair}
+                  tone="tone-red"
+                />
+              </div>
+
+              <section className="panel table-panel">
+                <SectionTitle
+                  eyebrow="CORRELATION RESULTS"
+                  title="Detected campaigns"
+                  description="Campaigns are reconstructed from stored intelligence analysis events."
+                />
+
+                {loading ? (
+                  <div className="loading-state">
+                    <LoaderCircle className="spin" size={22} /> Loading campaign intelligence…
+                  </div>
+                ) : campaigns.length === 0 ? (
+                  <EmptyState
+                    icon={Target}
+                    title="No correlated campaigns found"
+                    message="Campaigns will appear when persisted session analyses contain sufficient shared evidence to correlate attacker activity across sessions or sensors."
+                  />
+                ) : (
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>CAMPAIGN</th>
+                          <th>CONFIDENCE</th>
+                          <th>SENSORS</th>
+                          <th>SESSIONS</th>
+                          <th>SOURCE IPs</th>
+                          <th>INTENTS</th>
+                          <th>PHASES</th>
+                          <th>LAST SEEN</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {campaigns.map((campaign, index) => {
+                          const sensors = Array.isArray(campaign.honeypot_ids) ? campaign.honeypot_ids : []
+                          const sessionIds = Array.isArray(campaign.session_ids) ? campaign.session_ids : []
+                          const sourceIps = Array.isArray(campaign.source_ips) ? campaign.source_ips : []
+                          const intents = Array.isArray(campaign.intents) ? campaign.intents : []
+                          const phases = Array.isArray(campaign.phases) ? campaign.phases : []
+                          const confidence = Math.max(0, Math.min(100, Number(campaign.confidence_score) || 0))
+
+                          return (
+                            <tr key={campaign.campaign_id || index}>
+                              <td>
+                                <div className="table-primary">{shortId(campaign.campaign_id || 'Unknown')}</div>
+                                <div className="table-secondary">{formatDate(campaign.first_seen)}</div>
+                              </td>
+                              <td>
+                                <div style={{ display: 'grid', gap: 5, minWidth: 76 }}>
+                                  <strong>{confidence}%</strong>
+                                  <div className="severity-track">
+                                    <div className="severity-fill bar-medium" style={{ width: `${confidence}%` }} />
+                                  </div>
+                                </div>
+                              </td>
+                              <td>
+                                <div className="table-primary">{sensors.length}</div>
+                                <div className="table-secondary">{sensors.join(', ') || '—'}</div>
+                              </td>
+                              <td>{sessionIds.length}</td>
+                              <td><span className="mono">{sourceIps.join(', ') || '—'}</span></td>
+                              <td>{intents.join(', ') || '—'}</td>
+                              <td>{phases.join(', ') || '—'}</td>
+                              <td>{formatDate(campaign.last_seen)}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <div className="bottom-note">
+                <ShieldCheck size={15} />
+                <span>Campaigns are reconstructed from persisted MORPHEUS intelligence events. Confidence is reported on a 0–100 scale.</span>
+              </div>
+            </>
+          )}
+
+          {page === 'http' && (
+            <>
+              <SectionTitle
+                eyebrow="EXPANDED DECEPTION SERVICES"
+                title="HTTP deception"
+                description="Inspect HTTP requests captured by the independent MORPHEUS HTTP deception service. This view reads only the dedicated HTTP event store."
+                action={
+                  <button className="button-secondary" onClick={() => loadData(true)} disabled={refreshing}>
+                    <RefreshCw size={15} className={refreshing ? 'spin' : ''} /> Refresh
+                  </button>
+                }
+              />
+
+              <div className="metrics-grid">
+                <MetricCard title="HTTP requests" value={httpEvents.length} subtitle="Loaded from HTTP telemetry" icon={Globe} tone="tone-blue" />
+                <MetricCard
+                  title="Unique source IPs"
+                  value={new Set(httpEvents.map((event) => event?.data?.client_ip || event?.data?.source_ip).filter(Boolean)).size}
+                  subtitle="Distinct requesting clients" icon={Crosshair} tone="tone-purple"
+                />
+                <MetricCard
+                  title="POST requests"
+                  value={httpEvents.filter((event) => String(event?.data?.method || '').toUpperCase() === 'POST').length}
+                  subtitle="Requests using POST" icon={Activity} tone="tone-amber"
+                />
+                <MetricCard
+                  title="Error responses"
+                  value={httpEvents.filter((event) => Number(event?.data?.response_status ?? event?.data?.status_code) >= 400).length}
+                  subtitle="HTTP status 400 and above" icon={AlertTriangle} tone="tone-red"
+                />
+              </div>
+
+              <div className="filter-toolbar">
+                <div className="search-box">
+                  <Search size={16} />
+                  <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search source IP, method, path, user-agent…" />
+                </div>
+                <span className="result-count">
+                  {httpEvents.filter((event) => {
+                    const data = event?.data || {}
+                    const searchable = [data.client_ip, data.source_ip, data.method, data.path, data.user_agent, data.content_type, data.response_status, data.status_code].filter(Boolean).join(' ').toLowerCase()
+                    return !search.trim() || searchable.includes(search.trim().toLowerCase())
+                  }).length} results
+                </span>
+              </div>
+
+              <section className="panel table-panel">
+                <SectionTitle eyebrow="REQUEST TELEMETRY" title="Captured HTTP requests" description="Request bodies, cookies, authorization headers, and passwords are not displayed." />
+                {httpEvents.length === 0 ? (
+                  <EmptyState icon={Globe} title="No HTTP requests recorded" message="The HTTP deception service may not be running yet, or its dedicated event store has no recorded requests." />
+                ) : (
+                  <div className="table-scroll">
+                    <table>
+                      <thead><tr><th>SOURCE IP</th><th>METHOD</th><th>PATH</th><th>STATUS</th><th>RESPONSE TIME</th><th>TIME</th></tr></thead>
+                      <tbody>
+                        {httpEvents.filter((event) => {
+                          const data = event?.data || {}
+                          const searchable = [data.client_ip, data.source_ip, data.method, data.path, data.user_agent, data.content_type, data.response_status, data.status_code].filter(Boolean).join(' ').toLowerCase()
+                          return !search.trim() || searchable.includes(search.trim().toLowerCase())
+                        }).map((event, index) => {
+                          const data = event?.data || {}
+                          const status = data.response_status ?? data.status_code ?? '—'
+                          const duration = data.response_time_ms
+                          return (
+                            <tr key={event.event_id || `${event.timestamp}-${index}`}>
+                              <td><span className="mono">{data.client_ip || data.source_ip || '—'}</span></td>
+                              <td><strong>{String(data.method || '—').toUpperCase()}</strong></td>
+                              <td><span className="mono">{data.path || '—'}</span></td>
+                              <td><span className="mono">{status}</span></td>
+                              <td>{duration == null ? '—' : `${Number(duration).toFixed(1)} ms`}</td>
+                              <td>{formatDate(event.timestamp)}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+              <div className="bottom-note"><ShieldCheck size={15} /><span>HTTP deception telemetry is isolated from the Cowrie production event store.</span></div>
+            </>
+          )}
+
+          {page === 'activity' && (
             <div className="coming-soon-panel panel">
               {(() => {
                 const item = comingSoon[page]

@@ -104,7 +104,11 @@ class CowrieAdapter(DeceptionAdapter):
                     pass
                 raise
 
-    def _write_personality_filesystem(self, paths: List[str]) -> None:
+    def _write_personality_filesystem(
+        self,
+        paths: List[str],
+        users: Optional[List[str]] = None,
+    ) -> None:
         """Build a verified filesystem from the original Cowrie baseline."""
         if self.filesystem_base_path is None:
             return
@@ -117,8 +121,8 @@ class CowrieAdapter(DeceptionAdapter):
         with self.filesystem_base_path.open("rb") as source:
             baseline = pickle.load(source)
 
-        derived = build_cowrie_tree(baseline, paths)
-        verify_cowrie_tree(derived, paths)
+        derived = build_cowrie_tree(baseline, paths, users)
+        verify_cowrie_tree(derived, paths, users)
 
         output = self.filesystem_output_path
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -134,7 +138,12 @@ class CowrieAdapter(DeceptionAdapter):
                 os.fsync(destination.fileno())
 
             with open(temporary, "rb") as check:
-                verify_cowrie_tree(pickle.load(check), paths)
+                verify_cowrie_tree(pickle.load(check), paths, users)
+
+            # Cowrie runs as UID/GID 999 and must be able to read this file.
+            # Assets contain synthetic deception data, not real credentials.
+            os.chmod(temporary, 0o644)
+
 
             os.replace(temporary, str(output))
         except Exception:
@@ -233,7 +242,10 @@ class CowrieAdapter(DeceptionAdapter):
             raise ValueError("A valid, single-line hostname is required.")
 
         # Prepare and verify selected assets before changing the config.
-        self._write_personality_filesystem(plan.fake_assets)
+        self._write_personality_filesystem(
+            plan.fake_assets,
+            plan.users,
+        )
         lines = (
             self.config_path.read_text(encoding="utf-8").splitlines(True)
             if self.config_path.exists()
