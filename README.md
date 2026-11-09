@@ -1,510 +1,238 @@
+<div align="center">
 # MORPHEUS
 
-![MORPHEUS](assets/morpheus-banner.png)
+### Adaptive Adversary Deception & Intelligence Platform
 
-### Adaptive Adversary Deception & Intelligence
+**Observe. Analyze. Adapt. Deceive.**
 
-MORPHEUS is an adaptive cybersecurity deception platform designed to observe, understand, and respond to attacker behavior inside controlled honeypot environments.
+A modular cybersecurity research platform that turns honeypot activity
+into actionable investigation context through telemetry, threat
+intelligence, risk analysis, and controlled deception.
 
-Instead of operating as a static honeypot, MORPHEUS continuously builds intelligence from attacker sessions and uses that intelligence to adapt the deception environment.
+![Python](https://img.shields.io/badge/Python-3.x-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/Dashboard-React-61DAFB?logo=react&logoColor=black)
+![Cowrie](https://img.shields.io/badge/Honeypot-Cowrie-222222)
+![Status](https://img.shields.io/badge/Status-Active%20Research-orange)
+</div>
 
-> **Observe → Understand → Score → Adapt → Deceive → Learn**
+------------------------------------------------------------------------
 
----
+## What is MORPHEUS?
 
-## Overview
+MORPHEUS is a cybersecurity research platform built around a Cowrie SSH
+honeypot. It collects attacker activity, reconstructs sessions, extracts
+indicators, supports behavioral and risk analysis, and provides
+workflows for controlled deception and investigation.
 
-Traditional honeypots generally present a fixed environment to every attacker.
+> **Research project:** Components have different levels of validation.
+> MORPHEUS is not a production-ready SOC or an autonomous
+> malware/zero-day detection system.
 
-MORPHEUS takes a different approach.
+## Core capabilities
 
-It reconstructs attacker sessions, extracts behavioral intelligence, identifies attacker intent, maps activity to MITRE ATT&CK techniques, calculates risk, selects an appropriate honeypot personality, and can automatically activate that personality on the running deception service.
+| Capability | What it does |
+|---|---|
+| **Honeypot telemetry** | Collects and processes Cowrie SSH activity |
+| **Session intelligence** | Reconstructs sessions and analyzes attacker behavior |
+| **Threat intelligence** | Extracts IOCs and supports IP/network enrichment |
+| **Risk analysis** | Produces structured, explainable risk assessments |
+| **Adaptive deception** | Supports deception personalities, planning, and Cowrie lifecycle control |
+| **Campaign analysis** | Correlates related attacker activity |
+| **Distributed sensors** | Forwards events to a central collector using authenticated delivery |
+| **Purple Team & dashboard** | Provides scenario workflows, REST/WebSocket APIs, and a React interface |
+| **Artifact handling** | Includes initial capture and static heuristic analysis; samples are not executed |
 
-The current implementation uses **Cowrie** as the SSH deception layer and provides an extensible architecture for additional deception services and intelligence modules.
+## Distributed collection flow
 
----
+The following diagram shows the distributed sensor-to-dashboard workflow.
 
-## Current Capabilities
-
-### Deception
-
-* Adaptive honeypot personalities
-* Configurable deception levels
-* Fake users
-* Fake services
-* Fake enterprise assets
-* Human-like response delay profiles
-* Automatic personality selection based on risk
-* Runtime Cowrie adaptation
-
-### Attacker Intelligence
-
-* Cowrie telemetry ingestion
-* Session reconstruction
-* Attacker behavioral fingerprinting
-* Command sequence analysis
-* Command timing analysis
-* Attacker intent classification
-* Attack phase identification
-* Attack campaign correlation
-* Cross-session correlation
-
-### Threat Intelligence
-
-* IOC extraction from attacker commands
-* IPv4, domain, URL, MD5 and SHA-256 IOC detection
-* IP intelligence abstraction
-* ASN/network intelligence
-* DB-IP based network attribution
-* MITRE ATT&CK technique mapping
-
-### Risk & Response
-
-* Explainable risk scoring
-* Risk severity classification
-* Adaptive defender response policies
-* Deception personality selection
-* Automatic deception planning
-* Automatic Cowrie lifecycle activation
-
-### Engineering
-
-* Event-driven architecture
-* Modular intelligence engines
-* Pluggable intelligence providers
-* Persistent JSONL event storage
-* Automated test suite
-* Docker-based deception deployment
-* Python virtual environment support
-
----
-
-## Adaptive Deception
-
-The core MORPHEUS control loop currently works like this:
-
-```text
-                    Attacker
-                       │
-                       ▼
-                ┌──────────────┐
-                │    Cowrie    │
-                │  Honeypot    │
-                └──────┬───────┘
-                       │
-                       ▼
-                ┌──────────────┐
-                │  Telemetry   │
-                │   Ingestion  │
-                └──────┬───────┘
-                       │
-                       ▼
-                ┌──────────────┐
-                │    Session   │
-                │ Reconstruction│
-                └──────┬───────┘
-                       │
-             ┌─────────┴─────────┐
-             ▼                   ▼
-      Behavioral Intel      Intent Analysis
-             │                   │
-             └─────────┬─────────┘
-                       ▼
-                ┌──────────────┐
-                │ Risk Scoring │
-                └──────┬───────┘
-                       │
-                       ▼
-              ┌─────────────────┐
-              │   Personality   │
-              │     Engine      │
-              └───────┬─────────┘
-                      │
-                      ▼
-              ┌─────────────────┐
-              │    Deception    │
-              │    Planner      │
-              └───────┬─────────┘
-                      │
-                      ▼
-              ┌─────────────────┐
-              │    Cowrie       │
-              │    Adapter      │
-              └───────┬─────────┘
-                      │
-                      ▼
-              ┌─────────────────┐
-              │    Lifecycle    │
-              │    Controller   │
-              └───────┬─────────┘
-                      │
-                      ▼
-                Live Honeypot
-                Adaptation
+```mermaid
+flowchart LR
+    A["Attacker"] --> B["Cowrie Honeypot"]
+    B --> C["MORPHEUS Sensor"]
+    C --> D["Persistent Queue"]
+    D --> E["FastAPI Collector"]
+    E --> F["Central Analysis Worker"]
+    F --> G["Risk & Threat Intelligence"]
+    G --> H["REST API / WebSocket"]
+    H --> I["React SOC Dashboard"]
 ```
 
----
+**The flow:** Cowrie records activity → the sensor queues and forwards
+events → the collector stores them → the analysis worker processes them
+→ the dashboard presents available investigation data.
 
-## Live Adaptive Demonstration
+## Highlights
 
-MORPHEUS has been validated against a live Cowrie instance.
+-   **Distributed collection verified:** A local integration test
+    confirmed Cowrie events were captured, forwarded with authenticated
+    requests, processed by the central worker, and removed from the
+    delivery queue after successful forwarding.
+-   **Adaptive deception demonstration:** A recorded high-risk scenario
+    selected the `enterprise_database` personality, with simulated
+    hostname `db-prod-01`, deception level `3`, and SSH/MySQL/Redis
+    services.
+-   **Automated tests:** The latest recorded full test run completed
+    with **443 passed**.
 
-A high-risk assessment selected the:
+These are validation snapshots from the development environment, not
+guarantees of production-scale reliability.
 
-```text
-enterprise_database
-```
+## Technology
 
-personality.
+`Python` · `FastAPI` · `Cowrie` · `Docker Compose` · `React` · `Vite` ·
+`pytest` · `JSONL` · `MITRE ATT&CK`
 
-The control plane then automatically applied:
+## Get started
 
-```text
-Hostname:       db-prod-01
-Deception:      Level 3
-Services:       SSH / MySQL / Redis
-```
+### Requirements
 
-MORPHEUS restarted the Cowrie container automatically.
+-   Linux (validated on Ubuntu under WSL2)
+-   Python 3 and `venv`
+-   Docker Engine and Docker Compose
+-   Node.js and npm (for the dashboard)
 
-A new SSH session subsequently presented:
+### 1. Clone and install
 
-```text
-test@db-prod-01:~$
-```
-
-This demonstrates that the adaptation pipeline is not merely generating a theoretical decision — the selected deception state is activated on the running honeypot.
-
----
-
-## Risk Intelligence
-
-MORPHEUS produces explainable risk assessments from multiple signals.
-
-Example factors include:
-
-```text
-Successful authentication
-        +
-Attacker intent
-        +
-Behavioral fingerprint
-        +
-Campaign correlation
-        +
-Network attribution
-        ↓
-   Risk Score
-        ↓
-Severity Classification
-        ↓
-Adaptive Response
-```
-
-The system currently supports:
-
-| Severity | Example adaptive behavior               |
-| -------- | --------------------------------------- |
-| Low      | Observe                                 |
-| Medium   | Increase logging and deception          |
-| High     | Expose fake assets and capture payloads |
-| Critical | Trigger alerting and incident capture   |
-
-These response policies are modular and can be extended as the platform grows.
-
----
-
-## MITRE ATT&CK Integration
-
-MORPHEUS maps observed attacker commands to MITRE ATT&CK techniques where supported.
-
-Examples include:
-
-```text
-whoami / id
-    → T1033 System Owner/User Discovery
-
-uname
-    → T1082 System Information Discovery
-
-ls / pwd / find
-    → T1083 File and Directory Discovery
-
-wget / curl
-    → T1105 Ingress Tool Transfer
-
-chmod
-    → T1222.001 File and Directory Permissions Modification
-
-/etc/passwd
-    → T1003.008 /etc/passwd
-```
-
-The mapping layer is designed to expand as additional behavioral rules and intelligence models are introduced.
-
----
-
-## Architecture
-
-```text
-                    ┌───────────────────────┐
-                    │       Attacker        │
-                    └───────────┬───────────┘
-                                │
-                                ▼
-                    ┌───────────────────────┐
-                    │   Deception Gateway   │
-                    └───────────┬───────────┘
-                                │
-                    ┌───────────▼───────────┐
-                    │   Deception Services   │
-                    │   Cowrie / SSH / etc.  │
-                    └───────────┬───────────┘
-                                │
-                                ▼
-                    ┌───────────────────────┐
-                    │   Event / Telemetry    │
-                    │        Pipeline        │
-                    └───────────┬───────────┘
-                                │
-              ┌─────────────────┼─────────────────┐
-              │                 │                 │
-              ▼                 ▼                 ▼
-        Session Intel     Behavioral Intel   Threat Intel
-              │                 │                 │
-              └─────────────────┼─────────────────┘
-                                │
-                                ▼
-                    ┌───────────────────────┐
-                    │     Risk Engine       │
-                    └───────────┬───────────┘
-                                │
-                                ▼
-                    ┌───────────────────────┐
-                    │ Adaptive Control Plane│
-                    ├───────────────────────┤
-                    │ Personality Engine    │
-                    │ Deception Planner      │
-                    │ Service Adapter        │
-                    │ Lifecycle Controller   │
-                    └───────────┬───────────┘
-                                │
-                                ▼
-                    ┌───────────────────────┐
-                    │   Adaptive Honeypot    │
-                    └───────────────────────┘
-```
-
----
-
-## Technology Stack
-
-| Component           | Technology        |
-| ------------------- | ----------------- |
-| Language            | Python            |
-| Honeypot            | Cowrie            |
-| Containers          | Docker            |
-| Testing             | pytest            |
-| Threat Mapping      | MITRE ATT&CK      |
-| IP/ASN Intelligence | DB-IP             |
-| Storage             | JSONL event store |
-| Environment         | Ubuntu / WSL2     |
-| Version Control     | Git / GitHub      |
-
----
-
-## Repository Structure
-
-```text
-MORPHEUS/
-│
-├── alerts/                 # Alerting integrations
-├── api/                    # API layer
-├── core/                   # Core platform infrastructure
-│   ├── config/
-│   ├── events/
-│   ├── logging/
-│   └── security/
-│
-├── deception/              # Adaptive deception system
-│   ├── personality/
-│   └── control/
-│
-├── deployment/             # Deployment configurations
-│   └── cowrie/
-│
-├── intelligence/           # Attacker intelligence engines
-│   ├── campaign/
-│   ├── fingerprint/
-│   ├── intent/
-│   ├── mitre/
-│   ├── response/
-│   ├── risk/
-│   ├── session/
-│   └── timeline/
-│
-├── malware/                # Malware analysis components
-├── purple_team/            # Purple-team functionality
-├── reporting/              # Incident/reporting components
-├── telemetry/              # Telemetry ingestion
-├── threat_intel/           # Threat intelligence providers
-│
-├── tests/                  # Automated tests
-├── docs/                   # Documentation
-├── requirements.txt
-└── pytest.ini
-```
-
----
-
-## Testing
-
-Latest verified test run:
-
-```text
-293 tests passed
-0 failed
-```
-
-The test suite covers core event processing, session reconstruction, fingerprinting, intent classification, MITRE mapping, IOC extraction, threat intelligence providers, risk scoring, adaptive response, honeypot personalities, and the deception control plane.
-
-Run the test suite with:
-
-```bash
-pytest -q
-```
-
----
-
-## Quick Start
-
-### 1. Clone the repository
-
-```bash
+``` bash
 git clone https://github.com/BobCat007/MORPHEUS.git
 cd MORPHEUS
-```
 
-### 2. Create a virtual environment
-
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
-### 3. Install dependencies
+### 2. Run the tests
 
-```bash
-pip install -r requirements.txt
+``` bash
+.venv/bin/pytest -q
 ```
 
-### 4. Run tests
+### 3. Start the honeypot
 
-```bash
-pytest -q
-```
-
-### 5. Deploy the Cowrie deception service
-
-```bash
+``` bash
 cd deployment/cowrie
 docker compose up -d
 ```
 
-The default SSH deception service is exposed on:
-
-```text
-localhost:2222
+The default Compose mapping publishes Cowrie on host port `2222` and may
+expose it on all host interfaces. For local-only testing, change the port
+mapping in `deployment/cowrie/docker-compose.yml` to
+`127.0.0.1:2222:2222` before starting the service. Test only with
+disposable credentials:
+``` bash
+ssh -p 2222 test@127.0.0.1
 ```
 
-> MORPHEUS is intended for controlled, isolated security research environments. Do not expose an experimental honeypot directly to networks you do not control without appropriate containment and monitoring.
+Stop it with `docker compose down`.
 
----
+## Run the backend
+
+Configure the environment using the templates in `deployment/systemd/`
+before starting the relevant processes.
+
+**API**
+
+``` bash
+.venv/bin/uvicorn api.app:app --host 127.0.0.1 --port 8000
+```
+
+Health check: `http://127.0.0.1:8000/api/v1/health`
+
+**Central analysis worker**
+
+``` bash
+.venv/bin/python -m telemetry.sensor.analysis_worker
+```
+
+**Standalone sensor**
+
+``` bash
+.venv/bin/python -m telemetry.sensor.process
+```
+
+The sensor requires `MORPHEUS_COLLECTOR_URL`, `MORPHEUS_SENSOR_ID`, and
+`MORPHEUS_SENSOR_TOKEN_FILE`. It also needs permission to read the
+Cowrie log and write to its persistent queue.
+
+For distributed deployment, configure unique sensor credentials and use
+HTTPS between sensor and collector. See
+`deployment/systemd/*.env.example` for configuration templates.
+
+## Dashboard
+
+``` bash
+cd dashboard
+npm ci
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`. The Vite development server proxies `/api`
+and WebSocket traffic to the API at `127.0.0.1:8000`.
+
+Build the dashboard with `npm run build`. More details:
+[`dashboard/README.md`](dashboard/README.md).
+
+## Project structure
+
+``` text
+api/             FastAPI application
+core/            Events, security, configuration, storage
+deception/       Deception personalities and controls
+intelligence/    Session, campaign, intent and risk analysis
+telemetry/       Cowrie ingestion and distributed sensors
+threat_intel/    Threat intelligence integrations
+purple_team/     Purple Team workflows
+reporting/       Investigation and reporting
+dashboard/       React + Vite interface
+deployment/      Cowrie and systemd examples
+tests/           Automated tests
+```
+
+## Validation
+
+Run these checks from the repository root:
+
+``` bash
+.venv/bin/pytest -q
+.venv/bin/python -m compileall -q api core intelligence purple_team telemetry threat_intel
+cd dashboard && npm ci && npm run build
+```
+
+Latest recorded validation: **443 Python tests passed**, Python compile
+check passed, and dashboard production build passed. Re-run checks after
+changes and on your own environment.
+
+## Safety notes
+
+-   Keep the honeypot isolated and use disposable test credentials.
+-   Do not expose the development API directly to the public internet.
+-   Use HTTPS for remote sensor communication.
+-   Protect token and environment files; never commit secrets.
+-   Treat captured commands and artifacts as untrusted. Do not execute
+    collected samples on the host.
+-   Under WSL2, services run only while the WSL environment is running.
 
 ## Roadmap
 
-MORPHEUS is being developed incrementally.
+**In progress:** advanced behavioral ML, intent prediction, broader
+deception-service coverage, and production hardening.
 
-### Completed
-
-* [x] Event-driven core
-* [x] Cowrie telemetry ingestion
-* [x] Session reconstruction
-* [x] Behavioral fingerprinting
-* [x] Intent classification
-* [x] MITRE ATT&CK mapping
-* [x] IOC extraction
-* [x] IP intelligence abstraction
-* [x] ASN/network intelligence
-* [x] Explainable risk scoring
-* [x] Adaptive defender response
-* [x] Adaptive honeypot personalities
-* [x] Deception planning
-* [x] Automatic Cowrie lifecycle control
-* [x] Live adaptive deception validation
-* [x] Automated test coverage
-
-### Planned
-
-* [x] Dynamic fake enterprise asset generation
-* [ ] Cross-honeypot correlation
-* [x] Attack campaign detection improvements (automated tests present)
-* [x] Attack timeline reconstruction enhancements (implementation and tests present)
-* [x] Incident report generation (automated tests present)
-* [ ] Expanded deception services
-* [x] Malware artifact capture and event publication (initial implementation)
-* [x] Safe static malware analysis (heuristic, static-only; samples are not executed)
-* [ ] Distributed honeynet support
-* [ ] Threat knowledge base
-* [ ] Purple-team mode
-* [x] React SOC dashboard (build verified; one lint warning remains)
-* [x] REST API endpoints (automated tests present)
-* [ ] Real-time WebSocket telemetry
-* [ ] Advanced behavioral ML
-* [ ] Advanced attacker intent prediction
-* [ ] Adaptive zero-day/anomaly detection
-
----
-
-## Security Philosophy
-
-MORPHEUS is designed around controlled deception and observation.
-
-The project prioritizes:
-
-* Isolation of attacker-facing services
-* Least-privilege execution
-* Controlled network exposure
-* Separation of management and deception infrastructure
-* Persistent telemetry
-* Explainable automated decisions
-* Safe handling of collected artifacts
-* Modular security boundaries
-
-The platform should be deployed inside an appropriately isolated environment, particularly when exposed to untrusted traffic.
-
----
-
-## Project Status
-
-**Development status: Active**
-
-MORPHEUS is currently in active development, with the adaptive deception control plane validated against a live Cowrie deployment.
-
-The architecture is intentionally modular so additional deception services, intelligence providers, machine-learning models, storage backends, and response mechanisms can be introduced without rewriting the core platform.
-
----
+MORPHEUS should not be represented as providing validated zero-day
+detection.
 
 ## License
 
-This project is currently maintained as an open-source cybersecurity research project.
+No license file was present during the documentation review. Until a
+`LICENSE` file is added, do not assume permission to reuse,
+redistribute, or modify this project.
 
-See the repository license for the applicable terms.
+------------------------------------------------------------------------
 
----
+<div align="center">
+**MORPHEUS** · Cybersecurity Research & Engineering
 
-## Author
-
-**BobCat007**
-
-MORPHEUS is built as a hands-on cybersecurity engineering project focused on adaptive deception, attacker intelligence, and automated defensive decision-making.
+[GitHub Repository](https://github.com/BobCat007/MORPHEUS)
+</div>
