@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity, AlertTriangle, ArrowUpRight,
   Bell, CheckCircle2, Clock3, Crosshair,
-  ExternalLink, FileSearch, Filter, LayoutDashboard, LoaderCircle,
+  ExternalLink, FileSearch, Filter, Fingerprint, LayoutDashboard, LoaderCircle,
   Globe, Menu, Radio, RefreshCw, Search, Shield, ShieldAlert,
   ShieldCheck, Siren, Target, X, Terminal, Eye, UserRound
 } from 'lucide-react'
@@ -363,6 +363,13 @@ export default function App() {
   const [incidents, setIncidents] = useState([])
   const [sessions, setSessions] = useState([])
   const [campaigns, setCampaigns] = useState([])
+  const [iocs, setIocs] = useState([])
+  const [iocTypeFilter, setIocTypeFilter] = useState('all')
+  const [purpleScenarios, setPurpleScenarios] = useState([])
+  const [purpleRuns, setPurpleRuns] = useState([])
+  const [runningScenario, setRunningScenario] = useState('')
+  const [selectedPurpleRun, setSelectedPurpleRun] = useState(null)
+  const [purpleError, setPurpleError] = useState('')
   const [httpEvents, setHttpEvents] = useState([])
   const [sensorHealth, setSensorHealth] = useState({
     sensors: [],
@@ -381,6 +388,8 @@ export default function App() {
   const [updatingIncident, setUpdatingIncident] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [notice, setNotice] = useState('')
+  const [liveAlert, setLiveAlert] = useState(null)
+  const seenAlertEvents = useRef(new Set())
 
   const loadData = useCallback(async (quiet = false) => {
     if (quiet) setRefreshing(true)
@@ -394,6 +403,7 @@ export default function App() {
         `${API}/incidents?limit=100`,
         `${API}/sessions?limit=100`,
         `${API}/campaigns?limit=100`,
+        `${API}/iocs?limit=500`,
       ]
       const responses = await Promise.all(endpoints.map((url) => fetch(url)))
       const failed = responses.find((response) => !response.ok)
@@ -402,7 +412,7 @@ export default function App() {
         throw new Error(`API returned HTTP ${failed.status}. Is the MORPHEUS API running?`)
       }
 
-      const [dashboardData, alertsData, incidentsData, sessionsData, campaignsData] = await Promise.all(
+      const [dashboardData, alertsData, incidentsData, sessionsData, campaignsData, iocsData] = await Promise.all(
         responses.map((response) => response.json())
       )
 
@@ -411,6 +421,7 @@ export default function App() {
       setIncidents(Array.isArray(incidentsData.items) ? incidentsData.items : [])
       setSessions(Array.isArray(sessionsData.items) ? sessionsData.items : [])
       setCampaigns(Array.isArray(campaignsData.items) ? campaignsData.items : [])
+      setIocs(Array.isArray(iocsData.items) ? iocsData.items : [])
 
       // Optional HTTP telemetry must not break the core dashboard.
       try {
@@ -438,6 +449,24 @@ export default function App() {
         }
       } catch {
         // Keep the main dashboard available if sensor health is unavailable.
+      }
+
+      // Purple Team is optional: failures must not affect core dashboard data.
+      try {
+        const [scenarioResponse, runResponse] = await Promise.all([
+          fetch(`${API}/purple-team/scenarios`),
+          fetch(`${API}/purple-team/runs?limit=50`),
+        ])
+        if (scenarioResponse.ok) {
+          const scenarioData = await scenarioResponse.json()
+          setPurpleScenarios(Array.isArray(scenarioData.items) ? scenarioData.items : [])
+        }
+        if (runResponse.ok) {
+          const runData = await runResponse.json()
+          setPurpleRuns(Array.isArray(runData.items) ? runData.items : [])
+        }
+      } catch {
+        // Purple Team remains isolated from core dashboard availability.
       }
     } catch (err) {
       setError(err.message || 'Unable to connect to the MORPHEUS API.')
@@ -478,6 +507,21 @@ export default function App() {
 
         if (event?.type === 'stream.connected') return
 
+        if (event?.event_type === 'morpheus.alert.created') {
+          const eventId = event.event_id || event.data?.alert_id
+
+          if (eventId && !seenAlertEvents.current.has(eventId)) {
+            seenAlertEvents.current.add(eventId)
+
+            // Bound memory usage during long-running dashboard sessions.
+            if (seenAlertEvents.current.size > 500) {
+              const oldest = seenAlertEvents.current.values().next().value
+              seenAlertEvents.current.delete(oldest)
+            }
+
+            setLiveAlert(event)
+          }
+        }
         // Batch bursts of events into one REST refresh.
         if (refreshTimer) return
         refreshTimer = window.setTimeout(() => {
@@ -617,6 +661,36 @@ export default function App() {
     }
   }
 
+  async function runPurpleScenario(scenarioId) {
+    if (runningScenario) return
+    setRunningScenario(scenarioId)
+    setPurpleError('')
+    setNotice('')
+
+    try {
+      const response = await fetch(`${API}/purple-team/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenario_id: scenarioId }),
+      })
+      const result = await response.json()
+      if (!response.ok) {
+        throw new Error(result.detail || `Simulation failed with HTTP ${response.status}`)
+      }
+
+      setSelectedPurpleRun(result)
+      setPurpleRuns((current) => [
+        result,
+        ...current.filter((item) => item.run_id !== result.run_id),
+      ])
+      setNotice(`Purple Team simulation completed: ${result.scenario_name}.`)
+    } catch (err) {
+      setPurpleError(err.message || 'Unable to run the Purple Team simulation.')
+    } finally {
+      setRunningScenario('')
+    }
+  }
+
   function navigate(nextPage) {
     setPage(nextPage)
     setSearch('')
@@ -680,6 +754,14 @@ export default function App() {
         <nav className="primary-nav" aria-label="Intelligence navigation">
           <button className={`nav-item ${page === 'intel' ? 'active' : ''}`} onClick={() => navigate('intel')}>
             <Target size={18} /><span>Campaign intelligence</span>
+          </button>
+          <button className={`nav-item ${page === 'iocs' ? 'active' : ''}`} onClick={() => navigate('iocs')}>
+            <Fingerprint size={18} /><span>IOC Knowledge Base</span>
+            <span className="nav-count">{iocs.length}</span>
+          </button>
+          <button className={`nav-item ${page === 'purple' ? 'active' : ''}`} onClick={() => navigate('purple')}>
+            <Crosshair size={18} /><span>Purple Team Mode</span>
+            <span className="nav-count">{purpleScenarios.length}</span>
           </button>
           <button className={`nav-item ${page === 'activity' ? 'active' : ''}`} onClick={() => navigate('activity')}>
             <Radio size={18} /><span>Event stream</span>
@@ -750,6 +832,56 @@ export default function App() {
           )}
 
           {notice && <div className="success-banner"><CheckCircle2 size={17} />{notice}<button className="icon-button" onClick={() => setNotice('')} aria-label="Dismiss message"><X size={15} /></button></div>}
+
+          {liveAlert && (() => {
+            const data = getAlertData(liveAlert)
+            const severity = String(data.severity || 'unknown').toLowerCase()
+
+            return (
+              <div className={`live-alert-banner live-alert-${severity}`} role="alert">
+               <div className="live-alert-icon">
+                <Siren size={21} />
+               </div>
+
+               <div className="live-alert-content">
+                 <div className="live-alert-heading">
+                   <strong>{data.title || 'New security alert detected'}</strong>
+                   <span className={`severity-${severity}`}>
+                     {severity.toUpperCase()}
+                   </span>
+                 </div>
+
+                 <p>{data.description || 'MORPHEUS detected suspicious activity.'}</p>
+
+           <div className="live-alert-details">
+               <span>Risk: {data.risk_score ?? 'N/A'}/100</span>
+                   <span>Source: {data.source_ip || 'Unknown'}</span>
+                   <span>Session: {data.session_id || 'Unknown'}</span>
+                 </div>
+
+                 <button
+                   className="live-alert-open"
+                   onClick={() => {
+                     setPage('alerts')
+                     setSearch(String(getAlertId(liveAlert)))
+                     setMobileNavOpen(false)
+                     setLiveAlert(null)
+                   }}
+                  >
+                    Investigate alert <ArrowUpRight size={14} />
+                  </button>
+                </div>
+
+                <button
+                  className="icon-button live-alert-dismiss"
+                  onClick={() => setLiveAlert(null)}
+                  aria-label="Dismiss security alert"
+                >
+                  <X size={17} />
+                </button>
+              </div>
+            )
+          })()}
 
           {page === 'overview' && (
             <>
@@ -1020,6 +1152,113 @@ export default function App() {
             </>
           )}
 
+
+          {page === 'iocs' && (
+            <>
+              <SectionTitle
+                eyebrow="THREAT INTELLIGENCE KNOWLEDGE BASE"
+                title="IOC Knowledge Base"
+                description="Aggregated indicators extracted from persisted MORPHEUS session analyses across honeypots."
+                action={
+                  <button className="button-secondary" onClick={() => loadData(true)} disabled={refreshing}>
+                    <RefreshCw size={15} className={refreshing ? 'spin' : ''} /> Refresh
+                  </button>
+                }
+              />
+
+              <div className="metrics-grid">
+                <MetricCard title="Unique indicators" value={iocs.length} subtitle="Aggregated IOC records" icon={Fingerprint} tone="tone-blue" />
+                <MetricCard title="IP addresses" value={iocs.filter((item) => item.ioc_type === 'ipv4').length} subtitle="IPv4 indicators" icon={Globe} tone="tone-purple" />
+                <MetricCard title="Domains" value={iocs.filter((item) => item.ioc_type === 'domain').length} subtitle="Domain indicators" icon={Target} tone="tone-amber" />
+                <MetricCard title="File hashes" value={iocs.filter((item) => ['md5', 'sha256'].includes(item.ioc_type)).length} subtitle="MD5 and SHA-256 indicators" icon={FileSearch} tone="tone-red" />
+              </div>
+
+              <div className="filter-toolbar">
+                <div className="search-box">
+                  <Search size={16} />
+                  <input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Search indicator, session, honeypot, or type…"
+                  />
+                </div>
+                <div className="filter-select">
+                  <Filter size={15} />
+                  <select value={iocTypeFilter} onChange={(event) => setIocTypeFilter(event.target.value)} aria-label="Filter IOC type">
+                    <option value="all">All types</option>
+                    <option value="ipv4">IPv4</option>
+                    <option value="domain">Domain</option>
+                    <option value="md5">MD5</option>
+                    <option value="sha256">SHA-256</option>
+                  </select>
+                </div>
+                <span className="result-count">
+                  {iocs.filter((item) => {
+                    const searchable = [
+                      item.value, item.ioc_type, ...(item.sources || []),
+                      ...(item.honeypot_ids || []), ...(item.session_ids || []),
+                      ...(item.context || []),
+                    ].filter(Boolean).join(' ').toLowerCase()
+                    return (iocTypeFilter === 'all' || item.ioc_type === iocTypeFilter)
+                      && (!search.trim() || searchable.includes(search.trim().toLowerCase()))
+                  }).length} results
+                </span>
+              </div>
+
+              <section className="panel table-panel">
+                <SectionTitle eyebrow="OBSERVED INDICATORS" title="Aggregated indicators" description="Occurrences, confidence, source sensors, and supporting context." />
+                {loading ? (
+                  <div className="loading-state"><LoaderCircle className="spin" size={22} /> Loading indicators…</div>
+                ) : iocs.length === 0 ? (
+                  <EmptyState icon={Fingerprint} title="No indicators recorded" message="Indicators will appear when MORPHEUS has persisted session analyses containing extractable IOC data." />
+                ) : (
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>INDICATOR</th><th>TYPE</th><th>OCCURRENCES</th>
+                          <th>CONFIDENCE</th><th>HONEYPOTS</th><th>LAST SEEN</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {iocs.filter((item) => {
+                          const searchable = [
+                            item.value, item.ioc_type, ...(item.sources || []),
+                            ...(item.honeypot_ids || []), ...(item.session_ids || []),
+                            ...(item.context || []),
+                          ].filter(Boolean).join(' ').toLowerCase()
+                          return (iocTypeFilter === 'all' || item.ioc_type === iocTypeFilter)
+                            && (!search.trim() || searchable.includes(search.trim().toLowerCase()))
+                        }).map((item, index) => (
+                          <tr key={`${item.ioc_type}-${item.value}-${index}`}>
+                            <td>
+                              <div className="table-primary mono">{item.value}</div>
+                              <div className="table-secondary">
+                                {(item.sources || []).join(', ') || 'Source not specified'}
+                              </div>
+                              {Array.isArray(item.context) && item.context.length > 0 && (
+                                <div className="table-secondary">{item.context.slice(0, 2).join(' · ')}</div>
+                              )}
+                            </td>
+                            <td><span className="badge">{item.ioc_type}</span></td>
+                            <td>{item.occurrences ?? 0}</td>
+                            <td>{`${Math.round((Number(item.confidence) || 0) * 100)}%`}</td>
+                            <td>{(item.honeypot_ids || []).join(', ') || '—'}</td>
+                            <td>{formatDate(item.last_seen)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+              <div className="bottom-note">
+                <ShieldCheck size={15} />
+                <span>Extracted indicators are leads for investigation, not proof that an artifact is malicious. Validate them before blocking or escalation.</span>
+              </div>
+            </>
+          )}
+
           {page === 'http' && (
             <>
               <SectionTitle
@@ -1100,6 +1339,148 @@ export default function App() {
                 )}
               </section>
               <div className="bottom-note"><ShieldCheck size={15} /><span>HTTP deception telemetry is isolated from the Cowrie production event store.</span></div>
+            </>
+          )}
+
+
+          {page === 'purple' && (
+            <>
+              <SectionTitle
+                eyebrow="CONTROLLED DETECTION VALIDATION"
+                title="Purple Team Mode"
+                description="Run safe, synthetic command-pattern simulations and compare MITRE ATT&CK techniques with MORPHEUS detection mappings."
+                action={
+                  <button className="button-secondary" onClick={() => loadData(true)} disabled={refreshing}>
+                    <RefreshCw size={15} className={refreshing ? 'spin' : ''} /> Refresh
+                  </button>
+                }
+              />
+
+              {purpleError && (
+                <div className="error-banner" role="alert">
+                  <AlertTriangle size={18} />
+                  <div><strong>Simulation error</strong><span>{purpleError}</span></div>
+                  <button className="icon-button" onClick={() => setPurpleError('')} aria-label="Dismiss error"><X size={16} /></button>
+                </div>
+              )}
+
+              <div className="metrics-grid">
+                <MetricCard title="Available scenarios" value={purpleScenarios.length} subtitle="Synthetic test scenarios" icon={Crosshair} tone="tone-blue" />
+                <MetricCard title="Simulation runs" value={purpleRuns.length} subtitle="Persisted evaluation results" icon={Activity} tone="tone-purple" />
+                <MetricCard title="Latest coverage" value={purpleRuns.length ? `${Number(purpleRuns[0].coverage_percent || 0).toFixed(1)}%` : '—'} subtitle="Expected techniques detected" icon={Target} tone="tone-amber" />
+                <MetricCard title="Latest status" value={purpleRuns[0]?.status || '—'} subtitle="Most recent simulation" icon={ShieldCheck} tone="tone-blue" />
+              </div>
+
+              <section className="panel" style={{ padding: 21, marginBottom: 18 }}>
+                <SectionTitle eyebrow="AVAILABLE TEST CASES" title="Simulation scenarios" description="Choose a scenario to map its synthetic commands against the detection knowledge base." />
+                {purpleScenarios.length === 0 ? (
+                  <EmptyState icon={Crosshair} title="No scenarios available" message="The Purple Team API may be unavailable. Refresh after confirming the MORPHEUS API is running." />
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 14 }}>
+                    {purpleScenarios.map((scenario) => (
+                      <div key={scenario.scenario_id} className="panel" style={{ padding: 16 }}>
+                        <div className="eyebrow">{scenario.tactic || 'MITRE ATT&CK'}</div>
+                        <h3 style={{ margin: '10px 0 7px', color: '#e6eef9', fontSize: 14 }}>{scenario.name}</h3>
+                        <p style={{ color: '#8190a5', fontSize: 11, lineHeight: 1.7, minHeight: 54 }}>{scenario.description}</p>
+                        <div className="table-secondary" style={{ margin: '12px 0' }}>
+                          {scenario.command_count} synthetic command patterns · {(scenario.expected_techniques || []).length} expected techniques
+                        </div>
+                        <button
+                          className="button-primary"
+                          style={{ width: '100%' }}
+                          disabled={Boolean(runningScenario)}
+                          onClick={() => runPurpleScenario(scenario.scenario_id)}
+                        >
+                          {runningScenario === scenario.scenario_id
+                            ? <><LoaderCircle size={15} className="spin" /> Running…</>
+                            : <><Terminal size={15} /> Run simulation</>}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {selectedPurpleRun && (
+                <section className="panel" style={{ padding: 21, marginBottom: 18 }}>
+                  <SectionTitle
+                    eyebrow="SIMULATION RESULT"
+                    title={selectedPurpleRun.scenario_name || 'Selected run'}
+                    description={`Run ${selectedPurpleRun.run_id || '—'} · ${formatDate(selectedPurpleRun.completed_at)}`}
+                  />
+                  <div className="metrics-grid">
+                    <MetricCard title="Coverage" value={`${Number(selectedPurpleRun.coverage_percent || 0).toFixed(1)}%`} subtitle="Expected techniques detected" icon={Target} tone="tone-blue" />
+                    <MetricCard title="Detected" value={(selectedPurpleRun.detected_expected_techniques || []).length} subtitle="Expected techniques matched" icon={CheckCircle2} tone="tone-purple" />
+                    <MetricCard title="Missed" value={(selectedPurpleRun.missed_techniques || []).length} subtitle="Expected techniques not matched" icon={AlertTriangle} tone="tone-amber" />
+                    <MetricCard title="Commands" value={selectedPurpleRun.command_count ?? 0} subtitle="Synthetic command patterns" icon={Terminal} tone="tone-blue" />
+                  </div>
+                  <div style={{ marginBottom: 15 }}>
+                    <strong style={{ color: '#d6e1f0', fontSize: 12 }}>Detected techniques</strong>
+                    {(selectedPurpleRun.detected_techniques || []).length === 0 ? (
+                      <p className="table-secondary">No techniques detected.</p>
+                    ) : (
+                      <ul style={{ color: '#aab9cc', fontSize: 11, lineHeight: 1.9 }}>
+                        {selectedPurpleRun.detected_techniques.map((item) => (
+                          <li key={item.technique_id}>
+                            <span className="mono">{item.technique_id}</span> — {item.technique_name}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div style={{ marginBottom: 15 }}>
+                    <strong style={{ color: '#d6e1f0', fontSize: 12 }}>Missed techniques</strong>
+                    <p className="table-secondary">
+                      {(selectedPurpleRun.missed_techniques || []).length
+                        ? selectedPurpleRun.missed_techniques.join(', ')
+                        : 'None'}
+                    </p>
+                  </div>
+                  <strong style={{ color: '#d6e1f0', fontSize: 12 }}>Simulated command patterns (not executed)</strong>
+                  <ul style={{ color: '#aab9cc', fontSize: 11, lineHeight: 1.9 }}>
+                    {(selectedPurpleRun.simulated_commands || []).map((command, index) => (
+                      <li key={`${index}-${command}`}><code>{command}</code></li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              <section className="panel table-panel">
+                <SectionTitle eyebrow="PERSISTED EVALUATIONS" title="Simulation history" description="Previously completed Purple Team runs." />
+                {purpleRuns.length === 0 ? (
+                  <EmptyState icon={Activity} title="No simulation runs yet" message="Run one of the scenarios above to create the first evaluation record." />
+                ) : (
+                  <div className="table-scroll">
+                    <table>
+                      <thead><tr><th>SCENARIO</th><th>STATUS</th><th>COVERAGE</th><th>TECHNIQUES</th><th>COMPLETED</th><th /></tr></thead>
+                      <tbody>
+                        {purpleRuns.map((run) => (
+                          <tr key={run.run_id}>
+                            <td>
+                              <div className="table-primary">{run.scenario_name || run.scenario_id}</div>
+                              <div className="table-secondary mono">{shortId(run.run_id)}</div>
+                            </td>
+                            <td><span className="badge">{run.status || 'unknown'}</span></td>
+                            <td>{Number(run.coverage_percent || 0).toFixed(1)}%</td>
+                            <td>{(run.detected_expected_techniques || []).length}/{(run.expected_techniques || []).length}</td>
+                            <td>{formatDate(run.completed_at)}</td>
+                            <td>
+                              <button className="row-action" onClick={() => setSelectedPurpleRun(run)}>
+                                View result <ArrowUpRight size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <div className="bottom-note">
+                <ShieldCheck size={15} />
+                <span>Simulations map predefined synthetic commands only. They do not execute commands, access credentials, or perform network activity.</span>
+              </div>
             </>
           )}
 

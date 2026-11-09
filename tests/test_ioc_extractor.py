@@ -176,3 +176,33 @@ def test_ioc_contains_session_metadata():
     assert url_ioc.source == "cowrie"
     assert url_ioc.session_id == "attacker-session-42"
     assert url_ioc.confidence == 1.0
+
+
+def test_dotted_filename_is_not_extracted_as_domain():
+    extractor = IOCExtractor()
+    session = ReconstructedSession(
+        session_id="filename-session",
+        commands=["cat /opt/company/secrets.env"],
+    )
+
+    iocs = extractor.extract(session)
+
+    assert not any(
+        ioc.ioc_type == "domain" and ioc.value == "secrets.env"
+        for ioc in iocs
+    )
+
+
+def test_domain_after_command_is_still_extracted():
+    extractor = IOCExtractor()
+    session = ReconstructedSession(
+        session_id="domain-session",
+        commands=["curl evil.example"],
+    )
+
+    iocs = extractor.extract(session)
+
+    assert any(
+        ioc.ioc_type == "domain" and ioc.value == "evil.example"
+        for ioc in iocs
+    )

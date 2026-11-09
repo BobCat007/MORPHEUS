@@ -4,6 +4,17 @@ services:
     container_name: morpheus-cowrie
     restart: unless-stopped
 
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    read_only: true
+
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+
     ports:
       - "2222:2222"
 

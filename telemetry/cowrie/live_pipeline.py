@@ -91,7 +91,7 @@ def run_live_cowrie_pipeline(
     event_bus.subscribe(ALERT_EVENT_TYPE, storage_handler.handle)
     event_bus.subscribe(ANALYSIS_EVENT_TYPE, alerting_handler.handle)
 
-    # Delivery failures are contained by WebhookHandler.
+    # Queue webhook deliveries so slow endpoints cannot block Cowrie ingestion.
     event_bus.subscribe(ALERT_EVENT_TYPE, webhook_handler.handle)
 
     follower = CowrieLogFollower(
@@ -100,4 +100,9 @@ def run_live_cowrie_pipeline(
         poll_interval=poll_interval,
         start_at_end=start_at_end,
     )
-    follower.run(stop_event)
+
+    webhook_handler.start()
+    try:
+        follower.run(stop_event)
+    finally:
+        webhook_handler.stop(timeout=10.0)

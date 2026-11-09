@@ -18,10 +18,12 @@ from intelligence.mitre.mapper import MitreMapper
 from intelligence.response.engine import AdaptiveResponseEngine
 from intelligence.risk.engine import RiskScoringEngine
 from intelligence.session.reconstructor import SessionReconstructor
+from threat_intel.ip.abuseipdb_provider import AbuseIPDBProvider
 from threat_intel.ip.dbip_provider import DBIPProvider
 from threat_intel.ip.resolver import IPIntelligenceResolver
 from threat_intel.network.dbip_asn_provider import DBIPASNProvider
 from threat_intel.network.resolver import NetworkIntelligenceResolver
+from threat_intel.ioc.extractor import IOCExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,7 @@ class IntelligenceHandler:
         self.campaign_detector = CampaignDetector()
         self.risk_engine = RiskScoringEngine()
         self.response_engine = AdaptiveResponseEngine()
+        self.ioc_extractor = IOCExtractor()
 
         # Prevent duplicate close events from processing a session twice.
         self.processed_session_ids: Set[str] = set()
@@ -106,6 +109,15 @@ class IntelligenceHandler:
                 logger.warning(
                     "DB-IP city database not found: %s",
                     city_database,
+                )
+
+            if settings.abuseipdb_api_key:
+                providers.append(
+                    AbuseIPDBProvider(
+                        api_key=settings.abuseipdb_api_key,
+                        timeout=settings.abuseipdb_timeout,
+                        max_age_days=settings.abuseipdb_max_age_days,
+                    )
                 )
 
             self.ip_resolver = IPIntelligenceResolver(providers=providers)
@@ -218,6 +230,7 @@ class IntelligenceHandler:
             fingerprint=fingerprint,
             campaign=campaign,
             network=network_intelligence,
+            ip_intelligence=ip_intelligence,
         )
         assessment.fingerprint_id = fingerprint.fingerprint_id
 
@@ -242,8 +255,13 @@ class IntelligenceHandler:
                 # deception service cannot be reconfigured.
                 deception_result["error"] = type(exc).__name__
 
+        indicators = self.ioc_extractor.extract(session)
+
         analysis = {
             "honeypot_id": self.honeypot_id,
+            "indicators_of_compromise": [
+                asdict(indicator) for indicator in indicators
+            ],
             "session": asdict(session),
             "fingerprint": asdict(fingerprint),
             "intents": [asdict(item) for item in intents],

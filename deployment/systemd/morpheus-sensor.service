@@ -1,0 +1,31 @@
+[Unit]
+Description=MORPHEUS Remote Cowrie Sensor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/morpheus
+EnvironmentFile=/etc/morpheus/sensor.env
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+
+ExecStartPre=/usr/bin/test -r ${MORPHEUS_COWRIE_LOG}
+ExecStart=/home/ubuntu/morpheus/.venv/bin/python -m telemetry.sensor.process
+
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/morpheus
+
+[Install]
+WantedBy=multi-user.target

@@ -108,10 +108,20 @@ class IOCExtractor:
                     )
                 )
 
-        domains = self.DOMAIN_PATTERN.findall(command)
+        for match in self.DOMAIN_PATTERN.finditer(command):
+            value = match.group(0)
+            start = match.start()
 
-        for value in domains:
-            if not self._is_ip_address(value):
+            # A dotted filename or path component is not a domain.
+            preceding = command[:start]
+            is_path_component = bool(
+                (
+                    preceding.endswith(("/", "\\\\"))
+                    and not preceding.endswith("://")
+                )
+            )
+
+            if not is_path_component and not self._is_ip_address(value):
                 iocs.append(
                     IOC(
                         value=value,

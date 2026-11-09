@@ -22,18 +22,48 @@ class IPIntelligenceResolver:
 
         self._validate_ip(ip)
 
+        combined = None
+        merge_fields = (
+            "country", "country_code", "city",
+            "latitude", "longitude", "asn",
+            "organization", "reverse_dns",
+            "reputation", "reputation_score",
+        )
+
         for provider in self.providers:
             try:
                 intelligence = provider.lookup(ip)
             except Exception:
-                logger.exception(
+                logger.warning(
                     "IP intelligence provider failed for %s",
+                    ip,
+                    exc_info=True,
+                )
+                continue
+
+            if intelligence is None:
+                continue
+
+            if intelligence.ip_address != ip:
+                logger.warning(
+                    "Ignoring mismatched IP intelligence result for %s",
                     ip,
                 )
                 continue
 
-            if intelligence is not None:
-                return intelligence
+            if combined is None:
+                combined = IPIntelligence(ip_address=ip)
+
+            for field in merge_fields:
+                value = getattr(intelligence, field, None)
+                if value is not None:
+                    setattr(combined, field, value)
+
+            for source in intelligence.sources:
+                combined.add_source(source)
+
+        if combined is not None:
+            return combined
 
         return IPIntelligence(
             ip_address=ip,

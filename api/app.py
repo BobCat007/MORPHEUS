@@ -16,6 +16,10 @@ from pydantic import BaseModel, Field
 from core.events.validator import validate_event
 from core.storage.event_store import EventStore
 from intelligence.campaign.aggregator import CrossHoneypotAggregator
+from intelligence.session.model import ReconstructedSession
+from threat_intel.ioc.extractor import IOCExtractor
+from purple_team.runner import PurpleTeamRunner
+from purple_team.store import PurpleTeamRunStore
 from incidents.service import (
     VALID_STATUSES,
     get_incident,
@@ -48,6 +52,10 @@ class SensorEventBatch(BaseModel):
 
 class SensorRegistration(BaseModel):
     sensor_id: str = Field(..., min_length=1, max_length=128)
+
+
+class PurpleTeamRunRequest(BaseModel):
+    scenario_id: str = Field(..., min_length=1, max_length=128)
 
 def _read_events(storage_path: str) -> List[Dict[str, Any]]:
     """Read the configured event store without exposing internal errors."""
@@ -142,6 +150,7 @@ def create_app(
     http_storage_path: Optional[str] = None,
     sensor_tokens: Optional[Dict[str, str]] = None,
     sensor_storage_path: Optional[str] = None,
+    purple_team_storage_path: Optional[str] = None,
 ) -> FastAPI:
     """Create an application using specified or configured event stores."""
     resolved_path = storage_path or os.getenv(
@@ -158,10 +167,14 @@ def create_app(
     )
 
     sensor_path = Path(resolved_sensor_path).expanduser().resolve()
+    resolved_purple_path = purple_team_storage_path or os.getenv(
+        "MORPHEUS_PURPLE_TEAM_STORE", "data/purple-team-runs.jsonl"
+    )
+    purple_path = Path(resolved_purple_path).expanduser().resolve()
 
-    if len({cowrie_path, http_path, sensor_path}) != 3:
+    if len({cowrie_path, http_path, sensor_path, purple_path}) != 4:
         raise ValueError(
-           "Cowrie, HTTP, and remote sensor events must use separate event stores."
+           "Cowrie, HTTP, and remote sensor and Purple Team data must use separate stores."
         )
     if cowrie_path == http_path:
         raise ValueError(
@@ -230,6 +243,8 @@ def create_app(
     application.state.http_storage_path = str(http_path)
     application.state.sensor_storage_path = str(sensor_path)
     application.state.sensor_tokens = dict(sensor_tokens)
+    application.state.purple_team_runner = PurpleTeamRunner()
+    application.state.purple_team_store = PurpleTeamRunStore(purple_path)
 
     @application.websocket("/api/v1/stream")
     async def event_stream(websocket: WebSocket) -> None:
@@ -725,6 +740,232 @@ def create_app(
             "total_matching": len(results),
             "items": results[:limit],
         }
+
+    @application.get("/api/v1/iocs")
+    def iocs(
+        q: Optional[str] = Query(None, max_length=256),
+        ioc_type: Optional[str] = Query(None, max_length=32),
+        honeypot_id: Optional[str] = Query(None, max_length=128),
+        limit: int = Query(100, ge=1, le=500),
+    ) -> Dict[str, Any]:
+        """Aggregate indicators across local and remote session analyses."""
+        analyses = _analysis_events(
+            application.state.storage_path,
+            application.state.sensor_storage_path,
+        )
+        aggregated: Dict[tuple, Dict[str, Any]] = {}
+        extractor = IOCExtractor()
+
+        def is_path_only_domain(value: str, evidence_items: Any) -> bool:
+            """Reject a domain only when every recorded occurrence is a file path."""
+            found = False
+
+            if not isinstance(evidence_items, list):
+                return False
+
+            for evidence in evidence_items:
+                if not isinstance(evidence, str):
+                    continue
+
+                start = 0
+                while True:
+                    index = evidence.find(value, start)
+                    if index < 0:
+                        break
+
+                    found = True
+                    preceding = evidence[:index]
+
+                    is_path = (
+                        preceding.endswith(("/", "\\\\"))
+                        and not preceding.endswith("://")
+                    )
+                    if not is_path:
+                        return False
+
+                    start = index + len(value)
+
+            return found
+
+        for event in analyses:
+            data = event.get("data", {})
+            timestamp = str(event.get("timestamp") or "")
+            session = data.get("session") or {}
+            session_id = str(session.get("session_id") or "")
+            sensor_id = str(data.get("honeypot_id") or "default")
+            indicators = data.get("indicators_of_compromise") or []
+
+            # Reconstruct IOCs for legacy analysis events.
+            if not indicators and isinstance(session, dict):
+                commands = session.get("commands") or []
+                if not isinstance(commands, list):
+                    commands = []
+
+                reconstructed = ReconstructedSession(
+                    session_id=session_id or "legacy-session",
+                    commands=[item for item in commands if isinstance(item, str)],
+                )
+                try:
+                    indicators = [
+                        asdict(item) for item in extractor.extract(reconstructed)
+                    ]
+                except (TypeError, ValueError, AttributeError):
+                    indicators = []
+
+            if not isinstance(indicators, list):
+                continue
+
+            for indicator in indicators:
+                if not isinstance(indicator, dict):
+                    continue
+                value = indicator.get("value")
+                kind = indicator.get("ioc_type")
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                if not isinstance(kind, str) or not kind.strip():
+                    continue
+
+                normalized_kind = kind.strip().lower()
+                normalized_value = value.strip()
+                if normalized_kind in {"domain", "ipv4", "md5", "sha256"}:
+                    normalized_value = normalized_value.lower()
+
+                if normalized_kind == "domain" and is_path_only_domain(
+                    normalized_value,
+                    indicator.get("context") or [],
+                ):
+                    continue
+
+                key = (normalized_kind, normalized_value.lower())
+
+                record = aggregated.get(key)
+                if record is None:
+                    record = {
+                        "value": normalized_value,
+                        "ioc_type": kind.strip().lower(),
+                        "sources": [],
+                        "honeypot_ids": [],
+                        "session_ids": [],
+                        "context": [],
+                        "confidence": 0.0,
+                        "occurrences": 0,
+                        "first_seen": timestamp,
+                        "last_seen": timestamp,
+                    }
+                    aggregated[key] = record
+
+                record["occurrences"] += 1
+                record["confidence"] = max(
+                    record["confidence"],
+                    min(1.0, max(0.0, float(indicator.get("confidence", 1.0)))),
+                )
+
+                source = str(indicator.get("source") or "unknown")
+                if source not in record["sources"]:
+                    record["sources"].append(source)
+                if sensor_id not in record["honeypot_ids"]:
+                    record["honeypot_ids"].append(sensor_id)
+                if session_id and session_id not in record["session_ids"]:
+                    record["session_ids"].append(session_id)
+
+                context = indicator.get("context") or []
+                if isinstance(context, list):
+                    for evidence in context:
+                        if (
+                            isinstance(evidence, str)
+                            and evidence
+                            and evidence not in record["context"]
+                            and len(record["context"]) < 20
+                        ):
+                            record["context"].append(evidence)
+
+                if timestamp and (
+                    not record["first_seen"] or timestamp < record["first_seen"]
+                ):
+                    record["first_seen"] = timestamp
+                if timestamp > record["last_seen"]:
+                    record["last_seen"] = timestamp
+
+        results = list(aggregated.values())
+
+        if ioc_type:
+            requested_type = ioc_type.strip().lower()
+            results = [
+                item for item in results
+                if item["ioc_type"] == requested_type
+            ]
+
+        if honeypot_id:
+            requested_sensor = honeypot_id.strip()
+            results = [
+                item for item in results
+                if requested_sensor in item["honeypot_ids"]
+            ]
+
+        if q:
+            needle = q.strip().lower()
+            results = [
+                item for item in results
+                if needle in item["value"].lower()
+                or needle in item["ioc_type"]
+                or any(needle in session for session in item["session_ids"])
+                or any(needle in sensor for sensor in item["honeypot_ids"])
+            ]
+
+        results.sort(
+            key=lambda item: (
+                item["last_seen"],
+                item["occurrences"],
+                item["value"],
+            ),
+            reverse=True,
+        )
+        return {
+            "count": len(results[:limit]),
+            "total_matching": len(results),
+            "total_unique": len(aggregated),
+            "items": results[:limit],
+        }
+
+    @application.get("/api/v1/purple-team/scenarios")
+    async def list_purple_team_scenarios():
+        """List safe, non-executing Purple Team simulation scenarios."""
+        items = application.state.purple_team_runner.list_scenarios()
+        return {"count": len(items), "items": items}
+
+    @application.post("/api/v1/purple-team/runs")
+    async def run_purple_team_scenario(payload: PurpleTeamRunRequest):
+        """Map synthetic commands and persist the Purple Team evaluation."""
+        try:
+            result = application.state.purple_team_runner.run(
+                payload.scenario_id
+            )
+        except KeyError:
+            raise HTTPException(
+                status_code=404,
+                detail="Purple Team scenario not found.",
+            )
+        application.state.purple_team_store.save(result)
+        return result
+
+    @application.get("/api/v1/purple-team/runs")
+    async def list_purple_team_runs(
+        limit: int = Query(100, ge=1, le=500),
+    ):
+        """List recent Purple Team simulation results."""
+        items = application.state.purple_team_store.list_runs(limit=limit)
+        return {"count": len(items), "items": items}
+
+    @application.get("/api/v1/purple-team/runs/{run_id}")
+    async def get_purple_team_run(run_id: str):
+        """Retrieve one Purple Team simulation result."""
+        result = application.state.purple_team_store.get_run(run_id)
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Purple Team run not found.",
+            )
+        return result
 
     @application.get("/api/v1/sessions")
     def sessions(

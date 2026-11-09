@@ -6,6 +6,7 @@ from intelligence.fingerprint.model import AttackerFingerprint
 from intelligence.intent.model import IntentResult
 from intelligence.risk.model import RiskAssessment, RiskFactor
 from intelligence.session.model import ReconstructedSession
+from threat_intel.ip.model import IPIntelligence
 from threat_intel.network.model import NetworkIntelligence
 
 
@@ -19,6 +20,7 @@ class RiskScoringEngine:
         fingerprint: Optional[AttackerFingerprint] = None,
         campaign: Optional[AttackCampaign] = None,
         network: Optional[NetworkIntelligence] = None,
+        ip_intelligence: Optional[IPIntelligence] = None,
     ) -> RiskAssessment:
         """Build a risk assessment from available attacker intelligence."""
 
@@ -31,6 +33,7 @@ class RiskScoringEngine:
         self._score_intents(assessment, intents)
         self._score_campaign(assessment, campaign)
         self._score_network(assessment, network)
+        self._score_ip_reputation(assessment, ip_intelligence)
 
         assessment.finalize()
 
@@ -165,3 +168,42 @@ class RiskScoringEngine:
                 factor.add_evidence(network.organization)
 
             assessment.add_factor(factor)
+
+
+    def _score_ip_reputation(
+        self,
+        assessment: RiskAssessment,
+        intelligence: Optional[IPIntelligence],
+    ) -> None:
+        """Add a bounded, explainable risk factor from IP reputation."""
+
+        if intelligence is None or intelligence.reputation_score is None:
+            return
+
+        score = intelligence.reputation_score
+        if not 0 <= score <= 100:
+            return
+
+        if score < 25:
+            return
+        elif score < 50:
+            risk_points = 5
+        elif score < 75:
+            risk_points = 10
+        elif score < 90:
+            risk_points = 15
+        else:
+            risk_points = 20
+
+        factor = RiskFactor(
+            name="ip_reputation",
+            score=risk_points,
+            category="threat_intelligence",
+        )
+        factor.add_evidence(
+            f"AbuseIPDB abuse confidence score: {score:g}/100"
+        )
+        factor.add_evidence(
+            f"Reputation classification: {intelligence.reputation or 'unspecified'}"
+        )
+        assessment.add_factor(factor)

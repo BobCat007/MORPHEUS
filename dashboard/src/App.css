@@ -151,6 +151,97 @@ tbody tr:hover { background: #121c2a; }
 .empty-state strong { color: #d6e1f0; font-size: 12px; }
 .empty-state p { max-width: 360px; margin: 8px 0 0; color: #788ba2; font-size: 10px; line-height: 1.7; }
 .error-banner, .success-banner { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; padding: 12px 14px; border: 1px solid #75404a; border-radius: 8px; color: #ff9eaa; background: #291820; font-size: 11px; }
+/* Live security alert notifications */
+.live-alert-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 20px;
+  padding: 17px;
+  border: 1px solid #69442f;
+  border-radius: 10px;
+  background: #211c1b;
+}
+
+.live-alert-high,
+.live-alert-critical {
+  border-color: #75404a;
+  background: #291820;
+}
+
+.live-alert-medium {
+  border-color: #66552c;
+  background: #302a1b;
+}
+
+.live-alert-low {
+  border-color: #285847;
+  background: #18332b;
+}
+
+.live-alert-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  color: #ff9eaa;
+  background: #49242e;
+}
+
+.live-alert-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.live-alert-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #f0f4fa;
+  font-size: 12px;
+}
+
+.live-alert-content p {
+  margin: 7px 0;
+  color: #b5c1d0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.live-alert-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  color: #a5b4c7;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+}
+
+.live-alert-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 7px 10px;
+  border: 1px solid #75404a;
+  border-radius: 6px;
+  color: #ffb0ba;
+  background: #351c27;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.live-alert-open:hover {
+  background: #49242e;
+}
+
+.live-alert-dismiss {
+  flex-shrink: 0;
+  margin-left: auto;
+}
 .error-banner > div { display: grid; gap: 4px; flex: 1; }
 .error-banner span { color: #d2a0a9; font-size: 10px; overflow-wrap: anywhere; }
 .error-banner .icon-button, .success-banner .icon-button { margin-left: auto; }

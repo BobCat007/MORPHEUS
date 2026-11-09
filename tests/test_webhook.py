@@ -220,3 +220,89 @@ def test_live_pipeline_delivers_created_alert(tmp_path, monkeypatch):
         if line.strip()
     ]
     assert any(event["event_type"] == ALERT_TYPE for event in stored)
+
+
+def test_background_worker_delivers_queued_alert(monkeypatch):
+    from threading import Event
+
+    delivered = Event()
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        delivered.set()
+        return FakeResponse(202)
+
+    monkeypatch.setattr(webhook_module, "urlopen", fake_urlopen)
+
+    handler = WebhookHandler("https://example.test/webhook")
+    handler.start()
+    try:
+        handler.handle(_alert_event())
+        assert delivered.wait(2), "Background worker did not deliver alert."
+        assert captured["payload"]["event_type"] == ALERT_TYPE
+    finally:
+        handler.stop(timeout=2)
+
+
+def test_background_worker_retries_transient_failure(monkeypatch):
+    from threading import Event
+
+    delivered = Event()
+    attempts = {"count": 0}
+
+    def flaky_urlopen(request, timeout):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise URLError("synthetic temporary failure")
+        delivered.set()
+        return FakeResponse(200)
+
+    monkeypatch.setattr(webhook_module, "urlopen", flaky_urlopen)
+
+    handler = WebhookHandler("https://example.test/webhook")
+    handler.start()
+    try:
+        handler.handle(_alert_event())
+        assert delivered.wait(3), "Webhook did not recover after retries."
+        assert attempts["count"] == 3
+    finally:
+        handler.stop(timeout=2)
+
+
+def test_background_worker_does_not_retry_permanent_client_error(monkeypatch):
+    from threading import Event
+    from urllib.error import HTTPError
+
+    finished = Event()
+    attempts = {"count": 0}
+
+    def rejected_urlopen(request, timeout):
+        attempts["count"] += 1
+        finished.set()
+        raise HTTPError(
+            "https://example.test/webhook",
+            400,
+            "Bad request",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr(webhook_module, "urlopen", rejected_urlopen)
+
+    handler = WebhookHandler("https://example.test/webhook")
+    handler.start()
+    try:
+        handler.handle(_alert_event())
+        assert finished.wait(2), "Worker did not process the alert."
+    finally:
+        handler.stop(timeout=2)
+
+    assert attempts["count"] == 1
+
+
+def test_disabled_background_worker_does_not_start():
+    handler = WebhookHandler("")
+    handler.start()
+    assert handler._worker is None
+    handler.stop()
