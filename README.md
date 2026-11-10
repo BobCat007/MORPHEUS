@@ -1,6 +1,6 @@
 <div align="center">
 <p align="center">
-  <img src="assets/morpheus-banner.png" alt="MORPHEUS" width="500">
+  <img src="assets/morpheus-banner.png" alt="MORPHEUS" width="700">
 </p>
 
 ### Adaptive Adversary Deception & Intelligence Platform
