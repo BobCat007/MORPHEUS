@@ -7,6 +7,8 @@ import signal
 import time
 from collections import defaultdict
 from pathlib import Path
+from alerts.engine import AlertEngine
+from alerts.handler import ALERT_EVENT_TYPE, AlertingHandler
 
 from core.events.bus import EventBus
 from core.events.model import MorpheusEvent
@@ -47,6 +49,11 @@ class SensorAnalysisWorker:
 
     def _create_sensor_context(self, sensor_id):
         bus = EventBus()
+        alerting_handler = AlertingHandler(
+          event_bus=bus,
+          event_store=self.analysis_store,
+          engine=AlertEngine(minimum_severity="high"),
+        )
 
         prior_analysis = [
             event
@@ -68,6 +75,15 @@ class SensorAnalysisWorker:
             "morpheus.intelligence.analysis",
             lambda event: append_jsonl(self.analysis_path, event.to_dict()),
         )
+        # Persist generated alerts and evaluate every intelligence analysis.
+        bus.subscribe(
+            ALERT_EVENT_TYPE,
+            lambda event: append_jsonl(self.analysis_path, event.to_dict()),
+        )
+        bus.subscribe(
+            "morpheus.intelligence.analysis",
+            alerting_handler.handle,
+        ) 
 
         for event_type in COWRIE_EVENT_TYPES:
             bus.subscribe(event_type, handler.handle)
